@@ -1,0 +1,667 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import type { GameState, GameMode, Pod } from './types/game';
+import { LEVELS } from './data/levels';
+import { k8sEngine } from './services/k8sEngine';
+import { soundEngine } from './services/soundEngine';
+import { ytPlayables } from './services/ytPlayables';
+
+import { Navbar } from './components/Navbar';
+import { ClusterCanvas } from './components/ClusterCanvas';
+import { ControlPanel } from './components/ControlPanel';
+import { KubectlTerminal } from './components/KubectlTerminal';
+import { YamlViewer } from './components/YamlViewer';
+import { LevelModal } from './components/LevelModal';
+import { GlossaryModal } from './components/GlossaryModal';
+import { PodInspectorModal } from './components/PodInspectorModal';
+
+export const App: React.FC = () => {
+  const [currentLevelId, setCurrentLevelId] = useState<number>(1);
+  const [mode, setMode] = useState<GameMode>('campaign');
+  const [isMuted, setIsMuted] = useState<boolean>(soundEngine.getMuted());
+  const [activeTab, setActiveTab] = useState<'terminal' | 'yaml'>('terminal');
+
+  // Modals state
+  const [isBriefingOpen, setIsBriefingOpen] = useState<boolean>(true);
+  const [isVictoryOpen, setIsVictoryOpen] = useState<boolean>(false);
+  const [isGlossaryOpen, setIsGlossaryOpen] = useState<boolean>(false);
+  const [inspectedPod, setInspectedPod] = useState<Pod | null>(null);
+
+  const initialLevel = LEVELS[0];
+
+  const [gameState, setGameState] = useState<GameState>({
+    mode: 'campaign',
+    currentLevelId: 1,
+    isPaused: false,
+    gameSpeed: 1,
+    score: 0,
+    highScore: 0,
+    uptimeSeconds: 0,
+    totalRequests: 0,
+    successfulRequests: 0,
+    failedRequests: 0,
+    sla: 100,
+    nodes: initialLevel.initialState.nodes || [],
+    deployments: initialLevel.initialState.deployments || [],
+    pods: initialLevel.initialState.pods || [],
+    services: initialLevel.initialState.services || [],
+    ingress: initialLevel.initialState.ingress || {
+      name: 'main-ingress',
+      rules: [],
+      enabled: true
+    },
+    packets: [],
+    trafficRate: initialLevel.initialState.trafficRate || 4,
+    trafficSpikeActive: false,
+    chaosActive: false,
+    terminalHistory: [
+      { text: '$ cluster initialized: kubedefender-v1.30', type: 'output' },
+      { text: '$ type `kubectl help` or use the suggestions below to interact', type: 'output' }
+    ]
+  });
+
+  const stateRef = useRef<GameState>(gameState);
+  stateRef.current = gameState;
+  const lastTimeRef = useRef<number>(performance.now());
+  const levelCompletedRef = useRef<boolean>(false);
+
+  // Initialize YouTube Playables SDK
+  useEffect(() => {
+    ytPlayables.notifyFirstFrameReady();
+    ytPlayables.notifyGameReady();
+
+    // Hook pause/resume from YouTube Playables
+    const unbindPause = ytPlayables.onPause(() => {
+      setGameState((prev) => ({ ...prev, isPaused: true }));
+    });
+    const unbindResume = ytPlayables.onResume(() => {
+      setGameState((prev) => ({ ...prev, isPaused: false }));
+    });
+    const unbindAudio = ytPlayables.onAudioChange((enabled) => {
+      setIsMuted(!enabled);
+      soundEngine.setMuted(!enabled);
+    });
+
+    // Load saved high score
+    ytPlayables.loadGameState<{ highScore: number }>().then((saved) => {
+      if (saved?.highScore) {
+        setGameState((prev) => ({ ...prev, highScore: saved.highScore }));
+      }
+    });
+
+    return () => {
+      unbindPause();
+      unbindResume();
+      unbindAudio();
+    };
+  }, []);
+
+  // Reset or Switch Level
+  const loadLevel = useCallback((levelId: number, targetMode: GameMode = 'campaign') => {
+    const targetLvl = LEVELS.find((l) => l.id === levelId) || LEVELS[0];
+    levelCompletedRef.current = false;
+    setIsVictoryOpen(false);
+    setIsBriefingOpen(targetMode === 'campaign');
+    setCurrentLevelId(levelId);
+    setMode(targetMode);
+
+    setGameState((prev) => {
+      const cloned = JSON.parse(JSON.stringify(targetLvl.initialState));
+      return {
+        ...prev,
+        mode: targetMode,
+        currentLevelId: levelId,
+        isPaused: false,
+        score: targetMode === 'survival' ? 0 : prev.score,
+        uptimeSeconds: 0,
+        totalRequests: 0,
+        successfulRequests: 0,
+        failedRequests: 0,
+        sla: 100,
+        nodes: cloned.nodes || [],
+        deployments: cloned.deployments || [],
+        pods: cloned.pods || [],
+        services: cloned.services || [],
+        ingress: cloned.ingress || { name: 'main-ingress', rules: [], enabled: true },
+        packets: [],
+        trafficRate: targetMode === 'survival' ? 30 : cloned.trafficRate || 5,
+        chaosActive: targetMode === 'survival',
+        activeChaosEvent: targetMode === 'survival' ? 'High Traffic Stress' : cloned.activeChaosEvent,
+        terminalHistory: [
+          { text: `$ switched context to mission-${levelId}`, type: 'output' },
+          { text: `$ mission: ${targetLvl.name} - ${targetLvl.k8sConcept}`, type: 'output' }
+        ],
+        selectedPodId: undefined,
+        selectedNodeId: undefined
+      };
+    });
+  }, []);
+
+  // Main simulation tick loop
+  useEffect(() => {
+    let animId: number;
+
+    const loop = (now: number) => {
+      const deltaSec = Math.min((now - lastTimeRef.current) / 1000, 0.1);
+      lastTimeRef.current = now;
+
+      setGameState((prevState) => {
+        const nextState = k8sEngine.tick(prevState, deltaSec * prevState.gameSpeed);
+
+        // Check level objectives in campaign mode
+        if (nextState.mode === 'campaign' && !levelCompletedRef.current) {
+          const currentLevel = LEVELS.find((l) => l.id === nextState.currentLevelId);
+          if (currentLevel) {
+            const allDone = currentLevel.objectives.every((obj) => obj.isCompleted(nextState));
+            if (allDone) {
+              levelCompletedRef.current = true;
+              setIsVictoryOpen(true);
+              ytPlayables.submitScore(nextState.score);
+              ytPlayables.saveGameState({ highScore: nextState.highScore, levelCompleted: currentLevel.id });
+            }
+          }
+        }
+
+        return nextState;
+      });
+
+      animId = requestAnimationFrame(loop);
+    };
+
+    animId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(animId);
+  }, []);
+
+  // Actions
+  const handleScale = (delta: number) => {
+    setGameState((prev) => {
+      const dep = prev.deployments[0];
+      if (!dep) return prev;
+      const newDesired = Math.max(0, Math.min(8, dep.desiredReplicas + delta));
+      const updatedDeps = prev.deployments.map((d) =>
+        d.name === dep.name ? { ...d, desiredReplicas: newDesired } : d
+      );
+
+      return {
+        ...prev,
+        deployments: updatedDeps,
+        terminalHistory: [
+          ...prev.terminalHistory,
+          { text: `$ kubectl scale deployment ${dep.name} --replicas=${newDesired}`, type: 'cmd' },
+          { text: `deployment.apps/${dep.name} scaled to ${newDesired}`, type: 'success' }
+        ]
+      };
+    });
+  };
+
+  const handleRolloutV2 = () => {
+    setGameState((prev) => {
+      const dep = prev.deployments[0];
+      if (!dep) return prev;
+
+      const updatedDeps = prev.deployments.map((d) =>
+        d.name === dep.name ? { ...d, version: 'v2.0', image: 'web-app:2.0' } : d
+      );
+
+      // Upgrade pods with rolling restart
+      const updatedPods = prev.pods.map((p) => ({
+        ...p,
+        version: 'v2.0',
+        logs: [...p.logs, 'Rolling update: container restarted with image web-app:2.0']
+      }));
+
+      soundEngine.playDeploy();
+
+      return {
+        ...prev,
+        deployments: updatedDeps,
+        pods: updatedPods,
+        terminalHistory: [
+          ...prev.terminalHistory,
+          { text: `$ kubectl set image deployment ${dep.name} ${dep.name}=web-app:2.0`, type: 'cmd' },
+          { text: `deployment.apps/${dep.name} image updated to web-app:2.0`, type: 'success' }
+        ]
+      };
+    });
+  };
+
+  const handleFixEnv = () => {
+    setGameState((prev) => {
+      const dep = prev.deployments[0];
+      if (!dep) return prev;
+
+      const updatedDeps = prev.deployments.map((d) =>
+        d.name === dep.name ? { ...d, env: { ...d.env, DB_HOST: 'postgres-cluster.default.svc' } } : d
+      );
+
+      const updatedPods = prev.pods.map((p) => {
+        if (p.deploymentName === dep.name) {
+          return {
+            ...p,
+            env: { ...p.env, DB_HOST: 'postgres-cluster.default.svc' },
+            status: 'Running' as const,
+            ready: true,
+            logs: [
+              ...p.logs,
+              '[Startup] DB_HOST injected successfully!',
+              '[DB Connector] Connected to postgres-cluster.default.svc:5432',
+              'Pod is now Ready and serving traffic.'
+            ]
+          };
+        }
+        return p;
+      });
+
+      soundEngine.playDeploy();
+
+      return {
+        ...prev,
+        deployments: updatedDeps,
+        pods: updatedPods,
+        terminalHistory: [
+          ...prev.terminalHistory,
+          { text: `$ kubectl set env deployment ${dep.name} DB_HOST=postgres-cluster`, type: 'cmd' },
+          { text: `config injected. Pod resolved CrashLoopBackOff.`, type: 'success' }
+        ]
+      };
+    });
+  };
+
+  const handleIncreaseLimits = () => {
+    setGameState((prev) => {
+      const dep = prev.deployments[0];
+      if (!dep) return prev;
+
+      const updatedDeps = prev.deployments.map((d) =>
+        d.name === dep.name ? { ...d, memoryLimit: 256, memoryRequest: 128 } : d
+      );
+
+      const updatedPods = prev.pods.map((p) => {
+        if (p.deploymentName === dep.name) {
+          return {
+            ...p,
+            memoryLimit: 256,
+            memoryRequest: 128,
+            status: p.status === 'OOMKilled' ? ('Running' as const) : p.status,
+            ready: true,
+            logs: [...p.logs, 'Memory limit updated to 256MiB. Container recovered.']
+          };
+        }
+        return p;
+      });
+
+      soundEngine.playDeploy();
+
+      return {
+        ...prev,
+        deployments: updatedDeps,
+        pods: updatedPods,
+        terminalHistory: [
+          ...prev.terminalHistory,
+          { text: `$ kubectl set resources deployment ${dep.name} --limits=memory=256Mi`, type: 'cmd' },
+          { text: `resource limits updated: memory limit increased to 256MiB`, type: 'success' }
+        ]
+      };
+    });
+  };
+
+  const handleFixServiceSelector = () => {
+    setGameState((prev) => {
+      const svc = prev.services[0];
+      if (!svc) return prev;
+
+      const updatedServices = prev.services.map((s) =>
+        s.name === svc.name ? { ...s, selector: { app: 'web' } } : s
+      );
+
+      soundEngine.playDeploy();
+
+      return {
+        ...prev,
+        services: updatedServices,
+        terminalHistory: [
+          ...prev.terminalHistory,
+          { text: `$ kubectl patch svc ${svc.name} -p '{"spec":{"selector":{"app":"web"}}}'`, type: 'cmd' },
+          { text: `service/${svc.name} selector updated to app=web. Endpoints connected!`, type: 'success' }
+        ]
+      };
+    });
+  };
+
+  const handleToggleHPA = () => {
+    setGameState((prev) => {
+      const dep = prev.deployments[0];
+      if (!dep) return prev;
+      const nextHpa = !dep.hpaEnabled;
+
+      const updatedDeps = prev.deployments.map((d) =>
+        d.name === dep.name ? { ...d, hpaEnabled: nextHpa } : d
+      );
+
+      soundEngine.playClick();
+
+      return {
+        ...prev,
+        deployments: updatedDeps,
+        terminalHistory: [
+          ...prev.terminalHistory,
+          {
+            text: nextHpa
+              ? `$ kubectl autoscale deployment ${dep.name} --min=2 --max=7 --cpu-percent=60`
+              : `$ kubectl delete hpa ${dep.name}-hpa`,
+            type: 'cmd'
+          },
+          {
+            text: nextHpa
+              ? `horizontalpodautoscaler.autoscaling/${dep.name}-hpa enabled (target: 60% CPU)`
+              : `horizontalpodautoscaler.autoscaling/${dep.name}-hpa deleted`,
+            type: 'success'
+          }
+        ]
+      };
+    });
+  };
+
+  const handleAddNode = () => {
+    setGameState((prev) => {
+      if (prev.nodes.length >= 4) return prev;
+      const newNodeId = `node-${prev.nodes.length + 1}`;
+      const newNode = {
+        id: newNodeId,
+        name: `worker-node-${prev.nodes.length + 1}`,
+        status: 'Ready' as const,
+        cpuCapacity: 1000,
+        cpuAllocated: 0,
+        memoryCapacity: 1024,
+        memoryAllocated: 0
+      };
+
+      soundEngine.playDeploy();
+
+      return {
+        ...prev,
+        nodes: [...prev.nodes, newNode],
+        terminalHistory: [
+          ...prev.terminalHistory,
+          { text: `$ cluster-autoscaler: provisioned new instance ${newNode.name}`, type: 'cmd' },
+          { text: `node/${newNode.name} joined the cluster with Ready status.`, type: 'success' }
+        ]
+      };
+    });
+  };
+
+  const handleTriggerChaos = () => {
+    setGameState((prev) => {
+      const events = [
+        'Sudden Traffic Spike (100 req/s)!',
+        'Node-2 Network Partition & Hardware Glitch',
+        'Payload Memory Burst Attack'
+      ];
+      const randomEvent = events[Math.floor(Math.random() * events.length)];
+
+      let newTrafficRate = prev.trafficRate;
+      const updatedNodes = [...prev.nodes];
+
+      if (randomEvent.includes('Traffic Spike')) {
+        newTrafficRate = Math.min(120, prev.trafficRate + 40);
+      } else if (randomEvent.includes('Node-2') && updatedNodes[1]) {
+        updatedNodes[1] = { ...updatedNodes[1], status: 'NotReady' };
+      }
+
+      soundEngine.playAlert();
+
+      return {
+        ...prev,
+        chaosActive: true,
+        activeChaosEvent: randomEvent,
+        trafficRate: newTrafficRate,
+        nodes: updatedNodes,
+        terminalHistory: [
+          ...prev.terminalHistory,
+          { text: `[CHAOS MONKEY] Triggered: ${randomEvent}`, type: 'error' }
+        ]
+      };
+    });
+  };
+
+  // Kubectl Command Execution Parser
+  const handleExecuteCommand = (cmd: string) => {
+    const trimmed = cmd.trim();
+    if (!trimmed) return;
+
+    const lower = trimmed.toLowerCase();
+    let outputText = '';
+    let outputType: 'output' | 'error' | 'success' = 'output';
+
+    if (lower === 'kubectl help' || lower === 'help') {
+      outputText = `Kubectl Cheat Sheet:
+  kubectl get pods               - List all pods & statuses
+  kubectl get nodes              - List worker nodes & condition
+  kubectl get svc                - List services & ClusterIPs
+  kubectl logs <pod-name>        - Stream container logs
+  kubectl describe pod <name>    - Detailed pod inspection & events
+  kubectl scale deployment web --replicas=<N>
+  kubectl set resources deployment web --limits=memory=256Mi
+  kubectl set image deployment web web=web-app:2.0
+  kubectl autoscale deployment web --min=2 --max=7 --cpu-percent=60`;
+    } else if (lower.startsWith('kubectl get pods') || lower === 'get pods') {
+      const header = 'NAME                 READY   STATUS             RESTARTS   NODE';
+      const rows = gameState.pods.map(
+        (p) =>
+          `${p.name.padEnd(20)} ${p.ready ? '1/1' : '0/1'}     ${p.status.padEnd(18)} ${p.restarts.toString().padEnd(10)} ${p.nodeId}`
+      );
+      outputText = [header, ...rows].join('\n');
+    } else if (lower.startsWith('kubectl get nodes') || lower === 'get nodes') {
+      const header = 'NAME             STATUS     ROLES    AGE    VERSION';
+      const rows = gameState.nodes.map(
+        (n) => `${n.name.padEnd(16)} ${n.status.padEnd(10)} worker   14d    v1.30.0`
+      );
+      outputText = [header, ...rows].join('\n');
+    } else if (lower.startsWith('kubectl get svc') || lower === 'get svc') {
+      const header = 'NAME          TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)';
+      const rows = gameState.services.map(
+        (s) => `${s.name.padEnd(13)} ${s.type.padEnd(11)} ${s.clusterIP.padEnd(12)} <none>        ${s.port}/TCP`
+      );
+      outputText = [header, ...rows].join('\n');
+    } else if (lower.includes('scale')) {
+      const match = lower.match(/--replicas=(\d+)/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        handleScale(num - (gameState.deployments[0]?.desiredReplicas || 0));
+        return;
+      } else {
+        outputText = 'Usage: kubectl scale deployment web --replicas=<count>';
+        outputType = 'error';
+      }
+    } else if (lower.includes('logs')) {
+      const parts = trimmed.split(' ');
+      const podName = parts[parts.length - 1];
+      const pod =
+        gameState.pods.find((p) => p.name.includes(podName) || p.id.includes(podName)) ||
+        gameState.pods[0];
+      if (pod) {
+        outputText = pod.logs.join('\n');
+      } else {
+        outputText = `Error from server (NotFound): pods "${podName}" not found`;
+        outputType = 'error';
+      }
+    } else if (lower.includes('limits=memory=')) {
+      handleIncreaseLimits();
+      return;
+    } else if (lower.includes('web-app:2.0')) {
+      handleRolloutV2();
+      return;
+    } else if (lower.includes('autoscale')) {
+      handleToggleHPA();
+      return;
+    } else {
+      outputText = `Command not recognized. Type \`kubectl help\` for available commands.`;
+      outputType = 'error';
+    }
+
+    setGameState((prev) => ({
+      ...prev,
+      terminalHistory: [
+        ...prev.terminalHistory,
+        { text: `$ ${trimmed}`, type: 'cmd' },
+        { text: outputText, type: outputType }
+      ]
+    }));
+  };
+
+  const currentLevel = LEVELS.find((l) => l.id === currentLevelId) || LEVELS[0];
+
+  return (
+    <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden select-none font-sans">
+      {/* Top Navigation */}
+      <Navbar
+        currentLevelId={currentLevelId}
+        mode={mode}
+        isMuted={isMuted}
+        score={gameState.score}
+        sla={gameState.sla}
+        onSelectLevel={(id) => loadLevel(id, 'campaign')}
+        onToggleMode={(m) => loadLevel(1, m)}
+        onToggleAudio={() => {
+          const next = soundEngine.toggleMute();
+          setIsMuted(next);
+        }}
+        onOpenGlossary={() => setIsGlossaryOpen(true)}
+        onOpenBriefing={() => setIsBriefingOpen(true)}
+        onResetLevel={() => loadLevel(currentLevelId, mode)}
+      />
+
+      {/* Main Workspace Body */}
+      <div className="flex-1 flex flex-col md:flex-row gap-3 p-3 overflow-hidden">
+        {/* Left / Center: Interactive Cluster Canvas */}
+        <div className="flex-1 flex flex-col gap-3 min-h-0">
+          <div className="flex-1 min-h-[300px]">
+            <ClusterCanvas
+              state={gameState}
+              onSelectPod={(podId) => {
+                const found = gameState.pods.find((p) => p.id === podId) || null;
+                setInspectedPod(found);
+              }}
+              onSelectNode={(nodeId) => {
+                setGameState((prev) => ({ ...prev, selectedNodeId: nodeId }));
+              }}
+            />
+          </div>
+
+          {/* Quick Action Control Panel */}
+          <ControlPanel
+            state={gameState}
+            onScale={handleScale}
+            onRolloutV2={handleRolloutV2}
+            onFixEnv={handleFixEnv}
+            onIncreaseLimits={handleIncreaseLimits}
+            onFixServiceSelector={handleFixServiceSelector}
+            onToggleHPA={handleToggleHPA}
+            onAddNode={handleAddNode}
+            onTriggerChaos={handleTriggerChaos}
+            onTogglePause={() =>
+              setGameState((prev) => ({ ...prev, isPaused: !prev.isPaused }))
+            }
+            onToggleSpeed={() =>
+              setGameState((prev) => ({
+                ...prev,
+                gameSpeed: prev.gameSpeed === 1 ? 2 : 1
+              }))
+            }
+          />
+        </div>
+
+        {/* Right / Bottom: Kubectl CLI & Live YAML Inspector */}
+        <div className="w-full md:w-80 lg:w-96 flex flex-col gap-2 shrink-0">
+          {/* Tab buttons */}
+          <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
+            <button
+              onClick={() => {
+                soundEngine.playClick();
+                setActiveTab('terminal');
+              }}
+              className={`flex-1 py-1.5 font-bold rounded-lg transition ${
+                activeTab === 'terminal'
+                  ? 'bg-cyan-600 text-white shadow-sm glow-cyan'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              kubectl Terminal
+            </button>
+            <button
+              onClick={() => {
+                soundEngine.playClick();
+                setActiveTab('yaml');
+              }}
+              className={`flex-1 py-1.5 font-bold rounded-lg transition ${
+                activeTab === 'yaml'
+                  ? 'bg-cyan-600 text-white shadow-sm glow-cyan'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Live YAML Spec
+            </button>
+          </div>
+
+          <div className="flex-1">
+            {activeTab === 'terminal' ? (
+              <KubectlTerminal
+                state={gameState}
+                onExecuteCommand={handleExecuteCommand}
+                onClearTerminal={() =>
+                  setGameState((prev) => ({ ...prev, terminalHistory: [] }))
+                }
+              />
+            ) : (
+              <YamlViewer state={gameState} />
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Modals */}
+      <LevelModal
+        level={currentLevel}
+        state={gameState}
+        isOpen={isBriefingOpen || isVictoryOpen}
+        isVictory={isVictoryOpen}
+        onClose={() => setIsBriefingOpen(false)}
+        onNextLevel={() => {
+          if (currentLevelId < LEVELS.length) {
+            loadLevel(currentLevelId + 1, 'campaign');
+          } else {
+            // Completed all levels! Switch to Survival mode
+            loadLevel(1, 'survival');
+          }
+        }}
+        onRestartLevel={() => loadLevel(currentLevelId, mode)}
+      />
+
+      <GlossaryModal isOpen={isGlossaryOpen} onClose={() => setIsGlossaryOpen(false)} />
+
+      <PodInspectorModal
+        pod={inspectedPod}
+        onClose={() => setInspectedPod(null)}
+        onRestartPod={(podId) => {
+          setGameState((prev) => ({
+            ...prev,
+            pods: prev.pods.map((p) =>
+              p.id === podId
+                ? {
+                    ...p,
+                    status: 'Pending',
+                    ready: false,
+                    restarts: p.restarts + 1,
+                    createdTime: Date.now(),
+                    logs: [...p.logs, 'Manual restart triggered via inspector']
+                  }
+                : p
+            )
+          }));
+          setInspectedPod(null);
+        }}
+      />
+    </div>
+  );
+};
+
+export default App;
