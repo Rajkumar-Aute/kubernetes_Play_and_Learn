@@ -708,9 +708,9 @@ Endpoints:         ${gameState.pods.filter(p => p.status === 'Running').map(p =>
         </div>
 
         {/* Right / Bottom: Kubectl CLI & Live YAML Inspector */}
-        <div className="w-full md:w-80 lg:w-96 flex flex-col gap-2 shrink-0">
+        <div className="w-full md:w-80 lg:w-96 flex flex-col gap-2 shrink-0 h-full min-h-0 overflow-hidden">
           {/* Tab buttons */}
-          <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
+          <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs shrink-0">
             <button
               onClick={() => {
                 soundEngine.playClick();
@@ -739,7 +739,7 @@ Endpoints:         ${gameState.pods.filter(p => p.status === 'Running').map(p =>
             </button>
           </div>
 
-          <div className="flex-1">
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
             {activeTab === 'terminal' ? (
               <KubectlTerminal
                 state={gameState}

@@ -102,7 +102,7 @@ spec:
   };
 
   return (
-    <div className="bg-slate-950/95 border border-slate-800 rounded-xl flex flex-col h-[320px] md:h-full min-h-[300px] shadow-xl overflow-hidden font-mono">
+    <div className="bg-slate-950 border border-slate-800 rounded-xl flex flex-col h-full w-full min-h-0 shadow-2xl overflow-hidden font-mono">
       {/* Tab Header */}
       <div className="bg-slate-900 px-3 py-1.5 border-b border-slate-800 flex items-center justify-between text-xs">
         <div className="flex items-center gap-2">

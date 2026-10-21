@@ -17,6 +17,7 @@ export const KubectlTerminal: React.FC<KubectlTerminalProps> = ({
   const [inputVal, setInputVal] = useState('');
   const [historyIndex, setHistoryIndex] = useState(-1);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Contextual command suggestions based on current mission
@@ -86,15 +87,20 @@ export const KubectlTerminal: React.FC<KubectlTerminalProps> = ({
 
   const commandChips = getMissionCommandChips();
 
-  // Scroll to bottom whenever terminal history updates
+  // Auto-scroll to bottom whenever new command output is added
   useEffect(() => {
-    if (scrollRef.current) {
-      requestAnimationFrame(() => {
-        if (scrollRef.current) {
-          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-        }
-      });
-    }
+    const scrollToBottom = () => {
+      if (bottomRef.current) {
+        bottomRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      }
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+    };
+
+    scrollToBottom();
+    const timer = setTimeout(scrollToBottom, 60);
+    return () => clearTimeout(timer);
   }, [state.terminalHistory]);
 
   const handleSubmit = (e?: React.FormEvent) => {
@@ -133,15 +139,18 @@ export const KubectlTerminal: React.FC<KubectlTerminalProps> = ({
   };
 
   return (
-    <div className="bg-slate-950/95 border border-slate-800 rounded-xl flex flex-col h-[320px] md:h-full min-h-[300px] shadow-xl overflow-hidden font-mono">
-      {/* 1. Terminal Title Bar */}
-      <div className="bg-slate-900 px-3 py-1.5 border-b border-slate-800 flex items-center justify-between text-xs shrink-0">
-        <div className="flex items-center gap-2 text-slate-300">
+    <div className="bg-slate-950 border border-slate-800 rounded-xl flex flex-col h-full w-full min-h-0 shadow-2xl overflow-hidden font-mono">
+      {/* 1. Terminal Window Header (Git Bash / Linux Style) */}
+      <div className="bg-slate-900 px-3 py-1.5 border-b border-slate-800 flex items-center justify-between text-xs shrink-0 select-none">
+        <div className="flex items-center gap-2">
+          {/* macOS / Git Bash window buttons */}
+          <div className="flex items-center gap-1.5 mr-1">
+            <span className="w-2.5 h-2.5 rounded-full bg-rose-500/80 inline-block" />
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-500/80 inline-block" />
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/80 inline-block" />
+          </div>
           <Terminal className="w-3.5 h-3.5 text-cyan-400" />
-          <span className="font-semibold text-cyan-300">kubectl CLI Terminal</span>
-          <span className="text-[10px] text-slate-500 hidden sm:inline">
-            cluster: kubedefender-prod
-          </span>
+          <span className="font-semibold text-slate-200">bash: kubectl@k8s-prod</span>
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -159,7 +168,7 @@ export const KubectlTerminal: React.FC<KubectlTerminalProps> = ({
               soundEngine.playClick();
               onClearTerminal();
             }}
-            title="Clear terminal"
+            title="Clear terminal screen"
             className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-rose-400 transition"
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -167,20 +176,20 @@ export const KubectlTerminal: React.FC<KubectlTerminalProps> = ({
         </div>
       </div>
 
-      {/* 2. TOP TOOLBAR: Quick Command Suggestions (Moved to the TOP!) */}
-      <div className="px-3 py-2 bg-slate-900/80 border-b border-slate-800 flex flex-col gap-1.5 shrink-0">
+      {/* 2. TOP TOOLBAR: Suggestions directly beneath title bar */}
+      <div className="px-3 py-2 bg-slate-900/90 border-b border-slate-800 flex flex-col gap-1.5 shrink-0 select-none">
         <div className="flex items-center justify-between">
           <span className="text-[10px] text-cyan-400 uppercase font-black tracking-wider flex items-center gap-1">
             <Sparkles className="w-3 h-3 text-cyan-400" />
-            Suggested Commands (Tap to Run):
+            Suggested Commands:
           </span>
-          <span className="text-[9px] text-slate-500">
-            Mission {state.currentLevelId}
+          <span className="text-[9px] text-slate-500 font-sans">
+            Click to run in terminal
           </span>
         </div>
 
         {/* Suggestion Chips */}
-        <div className="flex flex-wrap items-center gap-1.5 max-h-[85px] overflow-y-auto no-scrollbar">
+        <div className="flex flex-wrap items-center gap-1.5 max-h-[70px] overflow-y-auto no-scrollbar">
           {commandChips.map((chip, idx) => (
             <button
               key={idx}
@@ -189,7 +198,7 @@ export const KubectlTerminal: React.FC<KubectlTerminalProps> = ({
                 onExecuteCommand(chip);
               }}
               title={`Execute: ${chip}`}
-              className="text-[10px] bg-slate-800 hover:bg-cyan-950 text-sky-300 hover:text-cyan-200 hover:border-cyan-500/80 px-2 py-0.5 rounded border border-slate-700/80 transition font-mono font-medium shadow-sm active:scale-95 text-left"
+              className="text-[10px] bg-slate-800 hover:bg-cyan-950 text-sky-300 hover:text-cyan-200 hover:border-cyan-500/80 px-2.5 py-0.5 rounded border border-slate-700 transition font-mono font-medium shadow-sm active:scale-95 text-left"
             >
               {chip.replace('kubectl ', '')}
             </button>
@@ -200,15 +209,15 @@ export const KubectlTerminal: React.FC<KubectlTerminalProps> = ({
       {/* 3. Terminal Console Output Screen (Middle, flexible scroll area) */}
       <div
         ref={scrollRef}
-        className="flex-1 p-3 overflow-y-auto space-y-1.5 text-xs select-text leading-relaxed bg-slate-950"
+        className="flex-1 min-h-0 p-3 overflow-y-auto space-y-2 text-xs select-text leading-relaxed bg-slate-950 font-mono scroll-smooth"
       >
         <div className="text-slate-500 text-[11px] mb-2 border-b border-slate-900 pb-1">
-          Kubernetes Fleet CLI. Tap suggestions above or type commands below. Try `kubectl get pods` or `kubectl help`.
+          KubeDefender Cluster Shell. Type commands or tap suggestions above. Scroll up to view history.
         </div>
 
         {state.terminalHistory.map((item, index) => {
           let colorClass = 'text-slate-300';
-          if (item.type === 'cmd') colorClass = 'text-cyan-400 font-bold';
+          if (item.type === 'cmd') colorClass = 'text-cyan-400 font-bold border-l-2 border-cyan-500 pl-2 mt-2';
           if (item.type === 'error') colorClass = 'text-rose-400 font-semibold';
           if (item.type === 'success') colorClass = 'text-emerald-400 font-semibold';
 
@@ -218,14 +227,19 @@ export const KubectlTerminal: React.FC<KubectlTerminalProps> = ({
             </div>
           );
         })}
+
+        {/* Dummy bottom anchor for auto-scrolling */}
+        <div ref={bottomRef} className="h-1 shrink-0" />
       </div>
 
-      {/* 4. Command Input Bar (At the very bottom) */}
+      {/* 4. Command Prompt Bar (Permanent, pinned at the bottom) */}
       <form
         onSubmit={handleSubmit}
-        className="bg-slate-900/90 border-t border-slate-800 px-3 py-2 flex items-center gap-2 shrink-0"
+        className="bg-slate-900 px-3 py-2 border-t border-slate-800 flex items-center gap-2 shrink-0"
       >
-        <span className="text-cyan-400 font-bold select-none">&gt;</span>
+        <span className="text-emerald-400 font-bold select-none text-xs">
+          user@k8s:~$
+        </span>
         <input
           ref={inputRef}
           type="text"
@@ -233,12 +247,12 @@ export const KubectlTerminal: React.FC<KubectlTerminalProps> = ({
           onChange={(e) => setInputVal(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="kubectl get pods..."
-          className="flex-1 bg-transparent text-xs text-slate-100 placeholder-slate-600 focus:outline-none"
+          className="flex-1 bg-transparent text-xs text-slate-100 placeholder-slate-600 focus:outline-none font-mono"
         />
         <button
           type="submit"
-          className="p-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded transition shadow-sm active:scale-95"
-          title="Run Command"
+          className="p-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded transition shadow-sm active:scale-95 shrink-0"
+          title="Execute Command (Enter)"
         >
           <Send className="w-3 h-3" />
         </button>
