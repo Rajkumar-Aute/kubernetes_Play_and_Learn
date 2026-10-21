@@ -164,6 +164,10 @@ class YouTubePlayablesService {
       }
     }
   }
+
+  public async sendScore(params: { value: number }): Promise<void> {
+    return this.submitScore(params.value);
+  }
 }
 
 export const ytPlayables = new YouTubePlayablesService();
