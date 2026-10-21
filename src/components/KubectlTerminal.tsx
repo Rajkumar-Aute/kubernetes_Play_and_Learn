@@ -70,7 +70,7 @@ export const KubectlTerminal: React.FC<KubectlTerminalProps> = ({
   };
 
   return (
-    <div className="bg-slate-950/95 border border-slate-800 rounded-xl flex flex-col h-[280px] shadow-xl overflow-hidden font-mono">
+    <div className="bg-slate-950/95 border border-slate-800 rounded-xl flex flex-col h-[320px] md:h-full min-h-[300px] shadow-xl overflow-hidden font-mono">
       {/* Terminal Title Bar */}
       <div className="bg-slate-900 px-3 py-1.5 border-b border-slate-800 flex items-center justify-between text-xs">
         <div className="flex items-center gap-2 text-slate-300">
@@ -127,23 +127,25 @@ export const KubectlTerminal: React.FC<KubectlTerminalProps> = ({
         })}
       </div>
 
-      {/* Quick Command Chips (Great for Mobile / YouTube Playables!) */}
-      <div className="px-2 py-1 bg-slate-900/60 border-t border-slate-900 flex items-center gap-1 overflow-x-auto no-scrollbar">
-        <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider shrink-0 mr-1">
+      {/* Quick Command Chips */}
+      <div className="px-3 py-1.5 bg-slate-900/70 border-t border-slate-800 flex flex-col gap-1.5">
+        <span className="text-[10px] text-slate-400 uppercase font-extrabold tracking-wider">
           Suggestions:
         </span>
-        {commandChips.map((chip, idx) => (
-          <button
-            key={idx}
-            onClick={() => {
-              soundEngine.playClick();
-              onExecuteCommand(chip);
-            }}
-            className="shrink-0 text-[10px] bg-slate-800/80 hover:bg-slate-700 text-sky-300 hover:text-cyan-200 px-2 py-0.5 rounded border border-slate-700/60 transition"
-          >
-            {chip.replace('kubectl ', '')}
-          </button>
-        ))}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {commandChips.map((chip, idx) => (
+            <button
+              key={idx}
+              onClick={() => {
+                soundEngine.playClick();
+                onExecuteCommand(chip);
+              }}
+              className="text-[10px] bg-slate-800 hover:bg-slate-700 text-sky-300 hover:text-cyan-200 px-2 py-0.5 rounded border border-slate-700/80 transition font-mono font-medium shadow-sm hover:border-cyan-500/50"
+            >
+              {chip.replace('kubectl ', '')}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Input Bar */}
