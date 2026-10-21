@@ -13,7 +13,7 @@ export class KubernetesSimulationEngine {
       uptimeSeconds: state.uptimeSeconds + deltaSec
     };
 
-    // 1. Update Pod states (CPU/Memory decay, startup transitions)
+    // 1. Update Pod states (CPU/Memory decay, startup transitions, kubelet auto-restarts)
     updatedState.pods = this.updatePods(updatedState.pods, updatedState.deployments, deltaSec);
 
     // 2. Self-Healing & Pod Scheduling: Ensure desiredReplicas matches actual pods
@@ -72,6 +72,7 @@ export class KubernetesSimulationEngine {
           } else {
             updatedPod.status = 'Running';
             updatedPod.ready = true;
+            updatedPod.memoryUsage = Math.min(updatedPod.memoryUsage, 50); // reset baseline on start
             soundEngine.playDeploy();
           }
         }
@@ -81,15 +82,27 @@ export class KubernetesSimulationEngine {
       if (updatedPod.status === 'Running' && updatedPod.memoryUsage > updatedPod.memoryLimit) {
         updatedPod.status = 'OOMKilled';
         updatedPod.ready = false;
+        updatedPod.createdTime = Date.now(); // mark time when OOM occurred for backoff
         updatedPod.restarts += 1;
         updatedPod.logs.push(`Kernel: OOMKilled - Exceeded memory limit ${updatedPod.memoryLimit}MiB (Exit Code 137)`);
         soundEngine.playAlert();
       }
 
+      // Kubelet Auto-Restart Loop for OOMKilled pods (restarts after 3.5s backoff)
+      if (updatedPod.status === 'OOMKilled') {
+        if (Date.now() - updatedPod.createdTime > 3500) {
+          updatedPod.status = 'Pending';
+          updatedPod.createdTime = Date.now();
+          updatedPod.memoryUsage = 45; // Reset memory footprint on container restart
+          updatedPod.logs.push(`[Kubelet] Restarting container after OOM kill (restart count: ${updatedPod.restarts})...`);
+        }
+      }
+
       // Gradually decay CPU and memory back toward idle baseline
       if (updatedPod.status === 'Running') {
-        updatedPod.cpuUsage = Math.max(10, updatedPod.cpuUsage - 25 * deltaSec);
-        updatedPod.memoryUsage = Math.max(40, updatedPod.memoryUsage - 10 * deltaSec);
+        updatedPod.cpuUsage = Math.max(10, updatedPod.cpuUsage - 35 * deltaSec);
+        // Only decay memory if not currently overloaded
+        updatedPod.memoryUsage = Math.max(45, updatedPod.memoryUsage - 25 * deltaSec);
       }
 
       return updatedPod;
@@ -130,9 +143,13 @@ export class KubernetesSimulationEngine {
       if (activePods.length < dep.desiredReplicas && readyNodes.length > 0) {
         const podsToCreate = dep.desiredReplicas - activePods.length;
         for (let i = 0; i < podsToCreate; i++) {
-          // Schedule on node with lowest allocation
-          const sortedNodes = [...readyNodes].sort((a, b) => a.cpuAllocated - b.cpuAllocated);
-          const chosenNode = sortedNodes[0];
+          // Balance across nodes: count pods currently on each node
+          const nodePodCounts = readyNodes.map((n) => ({
+            node: n,
+            count: currentPods.filter((p) => p.nodeId === n.id).length
+          }));
+          nodePodCounts.sort((a, b) => a.count - b.count);
+          const chosenNode = nodePodCounts[0].node;
 
           const newPod: Pod = {
             id: `pod-${dep.name}-${Math.random().toString(36).substring(2, 7)}`,
@@ -188,10 +205,8 @@ export class KubernetesSimulationEngine {
 
       if (avgCpu > targetCpu && dep.desiredReplicas < max) {
         dep.desiredReplicas = Math.min(max, dep.desiredReplicas + 1);
-        console.log(`[HPA] Scaling OUT ${dep.name} to ${dep.desiredReplicas} replicas (Avg CPU: ${Math.round(avgCpu)}%)`);
       } else if (avgCpu < targetCpu - 25 && dep.desiredReplicas > min) {
         dep.desiredReplicas = Math.max(min, dep.desiredReplicas - 1);
-        console.log(`[HPA] Scaling IN ${dep.name} to ${dep.desiredReplicas} replicas (Avg CPU: ${Math.round(avgCpu)}%)`);
       }
     });
   }
@@ -199,8 +214,8 @@ export class KubernetesSimulationEngine {
   private updateNodeMetrics(state: GameState) {
     state.nodes.forEach((node) => {
       const nodePods = state.pods.filter((p) => p.nodeId === node.id && p.status !== 'Terminating');
-      node.cpuAllocated = nodePods.reduce((sum, p) => sum + (p.status === 'Running' ? p.cpuUsage * 2.5 : p.cpuRequest), 0);
-      node.memoryAllocated = nodePods.reduce((sum, p) => sum + p.memoryUsage, 0);
+      node.cpuAllocated = nodePods.reduce((sum, p) => sum + (p.status === 'Running' ? p.cpuUsage * 2 : p.cpuRequest), 0);
+      node.memoryAllocated = nodePods.reduce((sum, p) => sum + (p.status === 'Running' ? p.memoryUsage : p.memoryRequest), 0);
     });
   }
 
@@ -212,37 +227,46 @@ export class KubernetesSimulationEngine {
     const readyPods = state.pods.filter((p) => p.status === 'Running' && p.ready);
     const service = state.services[0];
 
-    for (let i = 0; i < packetsToSpawn; i++) {
-      // Find matching pods via service selector
-      let targetPod: Pod | undefined = undefined;
-      const selectorKey = service ? Object.keys(service.selector)[0] : null;
-      const selectorVal = selectorKey ? service.selector[selectorKey] : null;
+    // Determine target pod selector
+    const selectorKey = service ? Object.keys(service.selector)[0] : null;
+    const selectorVal = selectorKey ? service.selector[selectorKey] : null;
 
-      const matchingPods = readyPods.filter((p) => {
-        if (!selectorKey || !selectorVal) return false;
-        // In our game, deploymentName matches label value
-        return p.deploymentName === selectorVal;
-      });
+    const matchingPods = readyPods.filter((p) => {
+      if (!selectorKey || !selectorVal) return false;
+      return p.deploymentName === selectorVal;
+    });
+
+    const isMemoryLeakChallenge = state.currentLevelId === 5 || state.activeChaosEvent?.includes('Memory');
+
+    for (let i = 0; i < packetsToSpawn; i++) {
+      let targetPod: Pod | undefined = undefined;
 
       if (matchingPods.length > 0) {
-        // Round-robin selection
+        // Round-robin selection across matching pods
         this.serviceIndex = (this.serviceIndex + 1) % matchingPods.length;
         targetPod = matchingPods[this.serviceIndex];
       }
 
       state.totalRequests += 1;
 
+      // Calculate source and target coordinates:
+      // Ingress is at (50, 100), Service is at (140, 240)
+      const targetX = targetPod ? 680 : 160;
+      const targetY = targetPod ? 120 + Math.random() * 240 : 250;
+
       const newPacket: TrafficPacket = {
         id: `pkt-${Math.random().toString(36).substring(2, 8)}`,
         path: '/',
-        sourceX: 40,
-        sourceY: 180 + (Math.random() * 80 - 40),
+        sourceX: 60,
+        sourceY: 100 + (Math.random() * 40 - 20),
         targetPodId: targetPod?.id,
-        targetX: targetPod ? 650 : 350,
-        targetY: targetPod ? 160 + (Math.random() * 100 - 50) : 180,
+        targetX,
+        targetY,
         progress: 0,
         status: 'in-flight',
-        memoryWeight: state.currentLevelId === 5 ? 120 : 25 // Level 5 tests memory limits
+        // In Mission 5 (or chaos), memory weight is heavy to trigger the OOM challenge!
+        // In other missions, memory weight is very low so pods don't accidentally crash.
+        memoryWeight: isMemoryLeakChallenge ? 80 : 2
       };
 
       state.packets.push(newPacket);
@@ -252,17 +276,24 @@ export class KubernetesSimulationEngine {
     const updatedPackets: TrafficPacket[] = [];
 
     state.packets.forEach((pkt) => {
-      pkt.progress += deltaSec * 2.2; // Packet flight speed
+      pkt.progress += deltaSec * 2.0;
 
       if (pkt.progress >= 1) {
         if (pkt.targetPodId) {
           const pod = state.pods.find((p) => p.id === pkt.targetPodId);
           if (pod && pod.status === 'Running') {
             // Apply packet workload
-            pod.cpuUsage = Math.min(100, pod.cpuUsage + 12);
-            pod.memoryUsage = Math.min(pod.memoryLimit + 30, pod.memoryUsage + pkt.memoryWeight * 0.15);
+            pod.cpuUsage = Math.min(100, pod.cpuUsage + 8);
+            
+            // Only add memory if it's the memory challenge or a slight bump
+            if (isMemoryLeakChallenge) {
+              pod.memoryUsage = Math.min(pod.memoryLimit + 30, pod.memoryUsage + pkt.memoryWeight * 0.4);
+            } else {
+              // Normal fluctuation: stay comfortably within 50 - 90 MiB
+              pod.memoryUsage = Math.min(pod.memoryLimit * 0.6, pod.memoryUsage + 0.3);
+            }
 
-            // Check if packet caused OOM
+            // Check if packet caused OOM (only if limit exceeded)
             if (pod.memoryUsage > pod.memoryLimit) {
               pkt.status = 'failed';
               pkt.failureReason = '500 Pod OOMKilled';
@@ -275,12 +306,12 @@ export class KubernetesSimulationEngine {
             }
           } else {
             pkt.status = 'failed';
-            pkt.failureReason = '503 Service Unavailable (Pod died)';
+            pkt.failureReason = '503 Service Unavailable (Pod not ready)';
             state.failedRequests += 1;
             soundEngine.playPacketError();
           }
         } else {
-          // No pod to receive it
+          // No pod to receive it (e.g., all pods dead or wrong selector)
           pkt.status = 'failed';
           pkt.failureReason = '503 No Endpoints Available';
           state.failedRequests += 1;

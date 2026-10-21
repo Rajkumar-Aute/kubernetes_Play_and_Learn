@@ -271,19 +271,23 @@ export const App: React.FC = () => {
       const dep = prev.deployments[0];
       if (!dep) return prev;
 
+      // Progressive memory step up: 64 -> 256 -> 512 -> 1024
+      const nextLimit = dep.memoryLimit < 256 ? 256 : dep.memoryLimit < 512 ? 512 : 1024;
+
       const updatedDeps = prev.deployments.map((d) =>
-        d.name === dep.name ? { ...d, memoryLimit: 256, memoryRequest: 128 } : d
+        d.name === dep.name ? { ...d, memoryLimit: nextLimit, memoryRequest: Math.round(nextLimit / 2) } : d
       );
 
       const updatedPods = prev.pods.map((p) => {
         if (p.deploymentName === dep.name) {
           return {
             ...p,
-            memoryLimit: 256,
-            memoryRequest: 128,
-            status: p.status === 'OOMKilled' ? ('Running' as const) : p.status,
+            memoryLimit: nextLimit,
+            memoryRequest: Math.round(nextLimit / 2),
+            memoryUsage: 45, // Reset memory footprint to baseline so pod instantly heals
+            status: 'Running' as const,
             ready: true,
-            logs: [...p.logs, 'Memory limit updated to 256MiB. Container recovered.']
+            logs: [...p.logs, `Memory limit upgraded to ${nextLimit}MiB. Pod recovered from OOM.`]
           };
         }
         return p;
@@ -297,8 +301,8 @@ export const App: React.FC = () => {
         pods: updatedPods,
         terminalHistory: [
           ...prev.terminalHistory,
-          { text: `$ kubectl set resources deployment ${dep.name} --limits=memory=256Mi`, type: 'cmd' },
-          { text: `resource limits updated: memory limit increased to 256MiB`, type: 'success' }
+          { text: `$ kubectl set resources deployment ${dep.name} --limits=memory=${nextLimit}Mi`, type: 'cmd' },
+          { text: `resource limits updated: memory limit increased to ${nextLimit}MiB. Pods recovered!`, type: 'success' }
         ]
       };
     });

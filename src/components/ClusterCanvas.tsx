@@ -356,7 +356,7 @@ const TrafficCanvasOverlay: React.FC<{ packets: GameState['packets'] }> = ({ pac
           // Linear interpolation between source and target
           const currentX = pkt.sourceX + (pkt.targetX - pkt.sourceX) * pkt.progress;
           const currentY = pkt.sourceY + (pkt.targetY - pkt.sourceY) * pkt.progress;
-          const isError = pkt.status === 'failed';
+          const isError = pkt.status === 'failed' || !pkt.targetPodId;
 
           return (
             <g key={pkt.id}>
@@ -364,15 +364,25 @@ const TrafficCanvasOverlay: React.FC<{ packets: GameState['packets'] }> = ({ pac
               <circle
                 cx={currentX}
                 cy={currentY}
-                r={isError ? 7 : 5}
+                r={isError ? 6 : 4}
                 className={isError ? 'fill-rose-500/80 animate-ping' : 'fill-cyan-400/80'}
               />
               <circle
                 cx={currentX}
                 cy={currentY}
-                r={isError ? 4 : 3}
-                className={isError ? 'fill-white' : 'fill-sky-100'}
+                r={isError ? 3.5 : 2.5}
+                className={isError ? 'fill-rose-200' : 'fill-sky-100'}
               />
+              {/* Error indicator text when dropped */}
+              {isError && pkt.progress > 0.7 && (
+                <text
+                  x={currentX + 8}
+                  y={currentY + 4}
+                  className="fill-rose-400 text-[9px] font-mono font-bold select-none"
+                >
+                  503
+                </text>
+              )}
             </g>
           );
         })}

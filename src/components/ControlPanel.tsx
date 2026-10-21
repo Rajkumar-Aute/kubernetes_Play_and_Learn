@@ -11,7 +11,8 @@ import {
   Pause,
   FastForward,
   Flame,
-  CheckCircle2
+  CheckCircle2,
+  AlertOctagon
 } from 'lucide-react';
 import type { GameState } from '../types/game';
 import { soundEngine } from '../services/soundEngine';
@@ -47,8 +48,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   const svc = state.services[0];
   const isV2 = dep?.version === 'v2.0';
   const hasDbEnv = dep?.env['DB_HOST'];
-  const hasHighMemory = dep?.memoryLimit >= 256;
   const isSelectorCorrect = svc?.selector['app'] === 'web';
+  const hasOOMPods = state.pods.some((p) => p.status === 'OOMKilled');
 
   return (
     <div className="bg-slate-900/90 backdrop-blur border border-slate-800 rounded-xl p-3 shadow-lg">
@@ -60,6 +61,12 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-cyan-300">
             Replicas: {dep?.desiredReplicas || 0}
           </span>
+          {hasOOMPods && (
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800 flex items-center gap-1 animate-pulse">
+              <AlertOctagon className="w-3 h-3 text-rose-400" />
+              Pods OOMKilled! Increase Limit
+            </span>
+          )}
         </div>
 
         {/* Time & Speed Controls */}
@@ -156,21 +163,21 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           <span>{hasDbEnv ? 'Env Injected' : 'Fix DB_HOST'}</span>
         </button>
 
-        {/* Set Memory Limit */}
+        {/* Set Memory Limit - Highlights when OOM occurs */}
         <button
           onClick={() => {
             soundEngine.playClick();
             onIncreaseLimits();
           }}
-          disabled={hasHighMemory}
           className={`px-2.5 py-2 text-xs font-semibold rounded-lg border flex items-center justify-center gap-1 transition shadow-sm ${
-            hasHighMemory
-              ? 'bg-slate-800/60 text-purple-300 border-slate-800 cursor-not-allowed'
-              : 'bg-purple-600 hover:bg-purple-500 text-white border-purple-500 glow-cyan'
+            hasOOMPods
+              ? 'bg-fuchsia-600 hover:bg-fuchsia-500 text-white border-fuchsia-400 glow-rose animate-pulse'
+              : 'bg-purple-600 hover:bg-purple-500 text-white border-purple-500'
           }`}
+          title="Upgrade container memory limit (cgroups ceiling)"
         >
           <Gauge className="w-3.5 h-3.5" />
-          <span>{hasHighMemory ? '256Mi Limit' : 'Tune Limits'}</span>
+          <span>{hasOOMPods ? 'Fix OOM' : `${dep?.memoryLimit || 256}Mi Limit`}</span>
         </button>
 
         {/* Connect Service Selector */}
