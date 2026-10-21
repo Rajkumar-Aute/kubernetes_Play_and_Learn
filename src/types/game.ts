@@ -135,6 +135,7 @@ export interface GameState {
   packets: TrafficPacket[];
   trafficRate: number; // req per second
   trafficSpikeActive: boolean;
+  isAutoTraffic?: boolean;
   
   // Chaos events
   chaosActive: boolean;

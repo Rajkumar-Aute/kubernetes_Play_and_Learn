@@ -219,9 +219,59 @@ export class KubernetesSimulationEngine {
     });
   }
 
+  public spawnSinglePacket(state: GameState): GameState {
+    const readyPods = state.pods.filter((p) => p.status === 'Running' && p.ready);
+    const service = state.services[0];
+    const selectorKey = service ? Object.keys(service.selector)[0] : null;
+    const selectorVal = selectorKey ? service.selector[selectorKey] : null;
+
+    const matchingPods = readyPods.filter((p) => {
+      if (!selectorKey || !selectorVal) return false;
+      return p.deploymentName === selectorVal;
+    });
+
+    let targetPod: Pod | undefined = undefined;
+    if (matchingPods.length > 0) {
+      this.serviceIndex = (this.serviceIndex + 1) % matchingPods.length;
+      targetPod = matchingPods[this.serviceIndex];
+    }
+
+    const targetX = targetPod ? 680 : 160;
+    const targetY = targetPod ? 120 + Math.random() * 240 : 250;
+
+    const singlePacket: TrafficPacket = {
+      id: `pkt-test-${Date.now()}`,
+      path: '/',
+      sourceX: 60,
+      sourceY: 100,
+      targetPodId: targetPod?.id,
+      targetX,
+      targetY,
+      progress: 0,
+      status: 'in-flight',
+      memoryWeight: state.currentLevelId === 5 ? 80 : 2
+    };
+
+    return {
+      ...state,
+      totalRequests: state.totalRequests + 1,
+      packets: [...state.packets, singlePacket],
+      terminalHistory: [
+        ...state.terminalHistory,
+        {
+          text: targetPod
+            ? `$ curl -i http://cluster.local/ -> routed via svc/${service?.name} to pod/${targetPod.name} (200 OK)`
+            : `$ curl -i http://cluster.local/ -> 503 Service Unavailable (No matching pod endpoints)`,
+          type: targetPod ? 'success' : 'error'
+        }
+      ]
+    };
+  }
+
   private simulateTraffic(state: GameState, deltaSec: number) {
-    // Spawn new packets based on trafficRate
-    const spawnChance = state.trafficRate * deltaSec;
+    // Only auto-spawn packets if isAutoTraffic !== false
+    const canAutoSpawn = state.isAutoTraffic !== false;
+    const spawnChance = canAutoSpawn ? state.trafficRate * deltaSec : 0;
     const packetsToSpawn = Math.floor(spawnChance) + (Math.random() < spawnChance % 1 ? 1 : 0);
 
     const readyPods = state.pods.filter((p) => p.status === 'Running' && p.ready);

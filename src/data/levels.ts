@@ -48,6 +48,7 @@ spec:
     ],
     initialState: {
       trafficRate: 4,
+      isAutoTraffic: false,
       nodes: [
         {
           id: 'node-1',
