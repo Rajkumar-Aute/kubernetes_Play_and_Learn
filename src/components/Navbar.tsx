@@ -8,7 +8,8 @@ import {
   Sparkles,
   Flame,
   CheckCircle2,
-  ListOrdered
+  ListOrdered,
+  HelpCircle
 } from 'lucide-react';
 import type { GameMode } from '../types/game';
 import { LEVELS } from '../data/levels';
@@ -25,6 +26,7 @@ interface NavbarProps {
   onToggleAudio: () => void;
   onOpenGlossary: () => void;
   onOpenBriefing: () => void;
+  onOpenHowToPlay: () => void;
   onResetLevel: () => void;
 }
 
@@ -39,9 +41,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   onToggleAudio,
   onOpenGlossary,
   onOpenBriefing,
+  onOpenHowToPlay,
   onResetLevel
 }) => {
-
   return (
     <header className="bg-slate-900/90 backdrop-blur border-b border-slate-800 px-3 py-2 sticky top-0 z-30 flex flex-wrap items-center justify-between gap-2 shadow-lg">
       {/* Brand & Mode */}
@@ -123,6 +125,19 @@ export const Navbar: React.FC<NavbarProps> = ({
             <ListOrdered className="w-3.5 h-3.5 text-cyan-400" />
             <span className="hidden md:inline">Briefing</span>
           </button>
+
+          {/* Prominent How to Play Button */}
+          <button
+            onClick={() => {
+              soundEngine.playClick();
+              onOpenHowToPlay();
+            }}
+            className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-gradient-to-r from-sky-600 to-cyan-600 hover:from-sky-500 hover:to-cyan-500 text-white shadow-md glow-cyan flex items-center gap-1.5 transition"
+            title="How to Play Tutorial"
+          >
+            <HelpCircle className="w-3.5 h-3.5" />
+            <span>How to Play</span>
+          </button>
         </div>
       ) : (
         <div className="flex items-center gap-3">
@@ -130,6 +145,16 @@ export const Navbar: React.FC<NavbarProps> = ({
             <Flame className="w-3.5 h-3.5" />
             <span>Chaos Mode</span>
           </div>
+          <button
+            onClick={() => {
+              soundEngine.playClick();
+              onOpenHowToPlay();
+            }}
+            className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-gradient-to-r from-sky-600 to-cyan-600 hover:from-sky-500 hover:to-cyan-500 text-white shadow-md glow-cyan flex items-center gap-1.5 transition"
+          >
+            <HelpCircle className="w-3.5 h-3.5" />
+            <span>How to Play</span>
+          </button>
         </div>
       )}
 

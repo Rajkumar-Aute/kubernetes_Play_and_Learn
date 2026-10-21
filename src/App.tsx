@@ -13,6 +13,8 @@ import { YamlViewer } from './components/YamlViewer';
 import { LevelModal } from './components/LevelModal';
 import { GlossaryModal } from './components/GlossaryModal';
 import { PodInspectorModal } from './components/PodInspectorModal';
+import { MissionGuideBanner } from './components/MissionGuideBanner';
+import { HowToPlayModal } from './components/HowToPlayModal';
 
 export const App: React.FC = () => {
   const [currentLevelId, setCurrentLevelId] = useState<number>(1);
@@ -24,6 +26,7 @@ export const App: React.FC = () => {
   const [isBriefingOpen, setIsBriefingOpen] = useState<boolean>(true);
   const [isVictoryOpen, setIsVictoryOpen] = useState<boolean>(false);
   const [isGlossaryOpen, setIsGlossaryOpen] = useState<boolean>(false);
+  const [isHowToPlayOpen, setIsHowToPlayOpen] = useState<boolean>(false);
   const [inspectedPod, setInspectedPod] = useState<Pod | null>(null);
 
   const initialLevel = LEVELS[0];
@@ -514,6 +517,25 @@ export const App: React.FC = () => {
 
   const currentLevel = LEVELS.find((l) => l.id === currentLevelId) || LEVELS[0];
 
+  const computeHighlightAction = (): 'scale' | 'rollout' | 'env' | 'limits' | 'service' | 'hpa' | 'node' | 'none' => {
+    const runningPods = gameState.pods.filter((p) => p.status === 'Running').length;
+    const dep = gameState.deployments[0];
+    const svc = gameState.services[0];
+    const hasOOM = gameState.pods.some((p) => p.status === 'OOMKilled');
+
+    if (currentLevelId === 1 && runningPods === 0) return 'scale';
+    if (currentLevelId === 2 && runningPods < 3) return 'scale';
+    if (currentLevelId === 3 && svc?.selector['app'] !== 'web') return 'service';
+    if (currentLevelId === 4 && (!dep?.env['DB_HOST'])) return 'env';
+    if (currentLevelId === 5 && (hasOOM || (dep && dep.memoryLimit < 256))) return 'limits';
+    if (currentLevelId === 6 && dep?.version !== 'v2.0') return 'rollout';
+    if (currentLevelId === 7 && runningPods < 4) return 'node';
+    if (currentLevelId === 8 && !dep?.hpaEnabled) return 'hpa';
+    return 'none';
+  };
+
+  const highlightAction = computeHighlightAction();
+
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden select-none font-sans">
       {/* Top Navigation */}
@@ -531,6 +553,7 @@ export const App: React.FC = () => {
         }}
         onOpenGlossary={() => setIsGlossaryOpen(true)}
         onOpenBriefing={() => setIsBriefingOpen(true)}
+        onOpenHowToPlay={() => setIsHowToPlayOpen(true)}
         onResetLevel={() => loadLevel(currentLevelId, mode)}
       />
 
@@ -538,7 +561,17 @@ export const App: React.FC = () => {
       <div className="flex-1 flex flex-col md:flex-row gap-3 p-3 overflow-hidden">
         {/* Left / Center: Interactive Cluster Canvas */}
         <div className="flex-1 flex flex-col gap-3 min-h-0">
-          <div className="flex-1 min-h-[300px]">
+          {/* Mission Objective & Step-by-Step Tutorial Banner */}
+          {mode === 'campaign' && (
+            <MissionGuideBanner
+              level={currentLevel}
+              state={gameState}
+              onOpenHowToPlay={() => setIsHowToPlayOpen(true)}
+              onOpenBriefing={() => setIsBriefingOpen(true)}
+            />
+          )}
+
+          <div className="flex-1 min-h-[280px]">
             <ClusterCanvas
               state={gameState}
               onSelectPod={(podId) => {
@@ -554,6 +587,7 @@ export const App: React.FC = () => {
           {/* Quick Action Control Panel */}
           <ControlPanel
             state={gameState}
+            highlightAction={highlightAction}
             onScale={handleScale}
             onRolloutV2={handleRolloutV2}
             onFixEnv={handleFixEnv}
@@ -641,6 +675,7 @@ export const App: React.FC = () => {
       />
 
       <GlossaryModal isOpen={isGlossaryOpen} onClose={() => setIsGlossaryOpen(false)} />
+      <HowToPlayModal isOpen={isHowToPlayOpen} onClose={() => setIsHowToPlayOpen(false)} />
 
       <PodInspectorModal
         pod={inspectedPod}

@@ -19,6 +19,7 @@ import { soundEngine } from '../services/soundEngine';
 
 interface ControlPanelProps {
   state: GameState;
+  highlightAction?: 'scale' | 'rollout' | 'env' | 'limits' | 'service' | 'hpa' | 'node' | 'none';
   onScale: (delta: number) => void;
   onRolloutV2: () => void;
   onFixEnv: () => void;
@@ -33,6 +34,7 @@ interface ControlPanelProps {
 
 export const ControlPanel: React.FC<ControlPanelProps> = ({
   state,
+  highlightAction = 'none',
   onScale,
   onRolloutV2,
   onFixEnv,
@@ -123,8 +125,17 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             onScale(1);
           }}
           disabled={!dep || dep.desiredReplicas >= 8}
-          className="px-2.5 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-500 text-white border border-blue-500 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1 transition shadow-md glow-blue"
+          className={`relative px-2.5 py-2 text-xs font-semibold rounded-lg border disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1 transition shadow-md ${
+            highlightAction === 'scale'
+              ? 'bg-blue-600 text-white border-cyan-400 ring-2 ring-cyan-400 animate-pulse glow-cyan font-bold'
+              : 'bg-blue-600 hover:bg-blue-500 text-white border-blue-500 glow-blue'
+          }`}
         >
+          {highlightAction === 'scale' && (
+            <span className="absolute -top-2.5 bg-cyan-400 text-slate-950 font-black text-[9px] uppercase px-1.5 rounded-full shadow tracking-wider animate-bounce">
+              Step 1
+            </span>
+          )}
           <Plus className="w-3.5 h-3.5" />
           <span>Scale +1</span>
         </button>
@@ -136,12 +147,19 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             onRolloutV2();
           }}
           disabled={isV2}
-          className={`px-2.5 py-2 text-xs font-semibold rounded-lg border flex items-center justify-center gap-1 transition shadow-sm ${
+          className={`relative px-2.5 py-2 text-xs font-semibold rounded-lg border flex items-center justify-center gap-1 transition shadow-sm ${
             isV2
               ? 'bg-slate-800/60 text-slate-500 border-slate-800 cursor-not-allowed'
+              : highlightAction === 'rollout'
+              ? 'bg-indigo-600 text-white border-cyan-400 ring-2 ring-cyan-400 animate-pulse glow-cyan font-bold'
               : 'bg-indigo-600 hover:bg-indigo-500 text-white border-indigo-500 glow-blue'
           }`}
         >
+          {highlightAction === 'rollout' && (
+            <span className="absolute -top-2.5 bg-cyan-400 text-slate-950 font-black text-[9px] uppercase px-1.5 rounded-full shadow tracking-wider animate-bounce">
+              Rollout
+            </span>
+          )}
           <UploadCloud className="w-3.5 h-3.5" />
           <span>{isV2 ? 'v2.0 Active' : 'Rollout v2'}</span>
         </button>
@@ -153,12 +171,19 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             onFixEnv();
           }}
           disabled={!!hasDbEnv}
-          className={`px-2.5 py-2 text-xs font-semibold rounded-lg border flex items-center justify-center gap-1 transition shadow-sm ${
+          className={`relative px-2.5 py-2 text-xs font-semibold rounded-lg border flex items-center justify-center gap-1 transition shadow-sm ${
             hasDbEnv
               ? 'bg-slate-800/60 text-emerald-400 border-slate-800 cursor-not-allowed'
-              : 'bg-amber-600 hover:bg-amber-500 text-white border-amber-500 glow-amber animate-pulse-subtle'
+              : highlightAction === 'env'
+              ? 'bg-amber-600 text-white border-amber-300 ring-2 ring-amber-400 animate-pulse glow-amber font-bold'
+              : 'bg-amber-600 hover:bg-amber-500 text-white border-amber-500 glow-amber'
           }`}
         >
+          {highlightAction === 'env' && (
+            <span className="absolute -top-2.5 bg-amber-400 text-slate-950 font-black text-[9px] uppercase px-1.5 rounded-full shadow tracking-wider animate-bounce">
+              Fix Env
+            </span>
+          )}
           <Wrench className="w-3.5 h-3.5" />
           <span>{hasDbEnv ? 'Env Injected' : 'Fix DB_HOST'}</span>
         </button>
@@ -169,13 +194,18 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             soundEngine.playClick();
             onIncreaseLimits();
           }}
-          className={`px-2.5 py-2 text-xs font-semibold rounded-lg border flex items-center justify-center gap-1 transition shadow-sm ${
-            hasOOMPods
-              ? 'bg-fuchsia-600 hover:bg-fuchsia-500 text-white border-fuchsia-400 glow-rose animate-pulse'
+          className={`relative px-2.5 py-2 text-xs font-semibold rounded-lg border flex items-center justify-center gap-1 transition shadow-sm ${
+            hasOOMPods || highlightAction === 'limits'
+              ? 'bg-fuchsia-600 hover:bg-fuchsia-500 text-white border-fuchsia-300 ring-2 ring-fuchsia-400 glow-rose animate-pulse font-bold'
               : 'bg-purple-600 hover:bg-purple-500 text-white border-purple-500'
           }`}
           title="Upgrade container memory limit (cgroups ceiling)"
         >
+          {(hasOOMPods || highlightAction === 'limits') && (
+            <span className="absolute -top-2.5 bg-fuchsia-400 text-slate-950 font-black text-[9px] uppercase px-1.5 rounded-full shadow tracking-wider animate-bounce">
+              Fix Limit
+            </span>
+          )}
           <Gauge className="w-3.5 h-3.5" />
           <span>{hasOOMPods ? 'Fix OOM' : `${dep?.memoryLimit || 256}Mi Limit`}</span>
         </button>
@@ -187,12 +217,19 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             onFixServiceSelector();
           }}
           disabled={isSelectorCorrect}
-          className={`px-2.5 py-2 text-xs font-semibold rounded-lg border flex items-center justify-center gap-1 transition shadow-sm ${
+          className={`relative px-2.5 py-2 text-xs font-semibold rounded-lg border flex items-center justify-center gap-1 transition shadow-sm ${
             isSelectorCorrect
               ? 'bg-slate-800/60 text-emerald-400 border-slate-800 cursor-not-allowed'
-              : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500 glow-emerald animate-pulse-subtle'
+              : highlightAction === 'service'
+              ? 'bg-emerald-600 text-white border-emerald-300 ring-2 ring-emerald-400 animate-pulse glow-emerald font-bold'
+              : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500 glow-emerald'
           }`}
         >
+          {highlightAction === 'service' && (
+            <span className="absolute -top-2.5 bg-emerald-400 text-slate-950 font-black text-[9px] uppercase px-1.5 rounded-full shadow tracking-wider animate-bounce">
+              Link Svc
+            </span>
+          )}
           <Link className="w-3.5 h-3.5" />
           <span>{isSelectorCorrect ? 'Svc Linked' : 'Link Service'}</span>
         </button>
@@ -203,12 +240,19 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             soundEngine.playClick();
             onToggleHPA();
           }}
-          className={`px-2.5 py-2 text-xs font-semibold rounded-lg border flex items-center justify-center gap-1 transition shadow-sm ${
+          className={`relative px-2.5 py-2 text-xs font-semibold rounded-lg border flex items-center justify-center gap-1 transition shadow-sm ${
             dep?.hpaEnabled
               ? 'bg-cyan-600 text-white border-cyan-400 glow-cyan'
+              : highlightAction === 'hpa'
+              ? 'bg-cyan-600 text-white border-cyan-300 ring-2 ring-cyan-400 animate-pulse glow-cyan font-bold'
               : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
           }`}
         >
+          {highlightAction === 'hpa' && (
+            <span className="absolute -top-2.5 bg-cyan-400 text-slate-950 font-black text-[9px] uppercase px-1.5 rounded-full shadow tracking-wider animate-bounce">
+              Enable HPA
+            </span>
+          )}
           {dep?.hpaEnabled ? (
             <CheckCircle2 className="w-3.5 h-3.5 text-white" />
           ) : (
@@ -224,8 +268,17 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             onAddNode();
           }}
           disabled={state.nodes.length >= 4}
-          className="px-2.5 py-2 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1 transition shadow-sm"
+          className={`relative px-2.5 py-2 text-xs font-semibold rounded-lg border disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1 transition shadow-sm ${
+            highlightAction === 'node'
+              ? 'bg-sky-600 text-white border-sky-300 ring-2 ring-sky-400 animate-pulse font-bold'
+              : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+          }`}
         >
+          {highlightAction === 'node' && (
+            <span className="absolute -top-2.5 bg-sky-400 text-slate-950 font-black text-[9px] uppercase px-1.5 rounded-full shadow tracking-wider animate-bounce">
+              Add Node
+            </span>
+          )}
           <ServerPlus className="w-3.5 h-3.5 text-sky-400" />
           <span>+ Node</span>
         </button>
