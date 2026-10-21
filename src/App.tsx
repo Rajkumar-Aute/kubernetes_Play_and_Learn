@@ -435,6 +435,9 @@ export const App: React.FC = () => {
     const trimmed = cmd.trim();
     if (!trimmed) return;
 
+    // Ensure the terminal tab is active so the player immediately sees the output
+    setActiveTab('terminal');
+
     const lower = trimmed.toLowerCase();
     let outputText = '';
     let outputType: 'output' | 'error' | 'success' = 'output';
@@ -444,12 +447,17 @@ export const App: React.FC = () => {
   kubectl get pods               - List all pods & statuses
   kubectl get nodes              - List worker nodes & condition
   kubectl get svc                - List services & ClusterIPs
+  kubectl get deploy             - List deployments & replicas
   kubectl logs <pod-name>        - Stream container logs
   kubectl describe pod <name>    - Detailed pod inspection & events
+  kubectl describe node <name>   - Node health & resource capacity
+  kubectl describe svc <name>    - Service endpoints & selector
   kubectl scale deployment web --replicas=<N>
   kubectl set resources deployment web --limits=memory=256Mi
   kubectl set image deployment web web=web-app:2.0
-  kubectl autoscale deployment web --min=2 --max=7 --cpu-percent=60`;
+  kubectl set env deployment backend DB_HOST=postgres-cluster
+  kubectl autoscale deployment web --min=2 --max=7 --cpu-percent=60
+  kubectl apply -f service.yaml  - Connect service selector`;
     } else if (lower.startsWith('kubectl get pods') || lower === 'get pods') {
       const header = 'NAME                 READY   STATUS             RESTARTS   NODE';
       const rows = gameState.pods.map(
@@ -463,12 +471,103 @@ export const App: React.FC = () => {
         (n) => `${n.name.padEnd(16)} ${n.status.padEnd(10)} worker   14d    v1.30.0`
       );
       outputText = [header, ...rows].join('\n');
-    } else if (lower.startsWith('kubectl get svc') || lower === 'get svc') {
+    } else if (lower.startsWith('kubectl get svc') || lower.startsWith('kubectl get service') || lower === 'get svc') {
       const header = 'NAME          TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)';
       const rows = gameState.services.map(
         (s) => `${s.name.padEnd(13)} ${s.type.padEnd(11)} ${s.clusterIP.padEnd(12)} <none>        ${s.port}/TCP`
       );
       outputText = [header, ...rows].join('\n');
+    } else if (lower.startsWith('kubectl get deploy') || lower === 'get deploy') {
+      const header = 'NAME    READY   UP-TO-DATE   AVAILABLE   AGE';
+      const dep = gameState.deployments[0];
+      const readyPods = gameState.pods.filter((p) => p.status === 'Running').length;
+      outputText = dep
+        ? [header, `${dep.name.padEnd(7)} ${readyPods}/${dep.desiredReplicas}     ${dep.desiredReplicas}            ${readyPods}           14d`].join('\n')
+        : 'No deployments found.';
+    } else if (lower.startsWith('kubectl get hpa') || lower === 'get hpa') {
+      const dep = gameState.deployments[0];
+      if (dep?.hpaEnabled) {
+        outputText = `NAME        REFERENCE         TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
+web-hpa     Deployment/web    45%/60%   ${dep.hpaMinReplicas || 2}         ${dep.hpaMaxReplicas || 7}         ${dep.desiredReplicas}          5m`;
+      } else {
+        outputText = 'No HorizontalPodAutoscalers found in default namespace.';
+      }
+    } else if (lower.startsWith('kubectl describe pod') || lower.startsWith('describe pod')) {
+      const parts = trimmed.split(' ');
+      const podName = parts[parts.length - 1];
+      const pod = gameState.pods.find((p) => p.name.includes(podName) || p.id.includes(podName)) || gameState.pods[0];
+      if (pod) {
+        outputText = `Name:         ${pod.name}
+Namespace:    default
+Node:         ${pod.nodeId}/192.168.1.10
+Status:       ${pod.status}
+IP:           10.244.0.42
+Containers:
+  ${pod.deploymentName}:
+    Image:          ${gameState.deployments[0]?.image || 'web:1.0'}
+    Port:           80/TCP
+    State:          ${pod.status === 'Running' ? 'Running' : pod.status === 'CrashLoopBackOff' ? 'Waiting (CrashLoopBackOff)' : 'Terminated (Exit Code 137)'}
+    Limits:
+      cpu:          ${pod.cpuLimit}m
+      memory:       ${pod.memoryLimit}Mi
+    Requests:
+      cpu:          ${pod.cpuRequest}m
+      memory:       ${pod.memoryRequest}Mi
+Events:
+  Type     Reason     Age   From               Message
+  ----     ------     ----  ----               -------
+  Normal   Scheduled  2m    default-scheduler  Successfully assigned default/${pod.name} to ${pod.nodeId}
+  Normal   Pulled     2m    kubelet            Container image pulled successfully
+  ${pod.status === 'OOMKilled' ? 'Warning  OOMKilled  10s   kubelet            Container exceeded memory limit (137)' : 'Normal   Started    1m    kubelet            Started container'}`;
+      } else {
+        outputText = `Error from server (NotFound): pods "${podName}" not found`;
+        outputType = 'error';
+      }
+    } else if (lower.startsWith('kubectl describe node') || lower.startsWith('describe node')) {
+      const parts = trimmed.split(' ');
+      const nodeName = parts[parts.length - 1];
+      const node = gameState.nodes.find((n) => n.name.includes(nodeName) || n.id.includes(nodeName)) || gameState.nodes[0];
+      if (node) {
+        outputText = `Name:               ${node.name}
+Roles:              worker
+Status:             ${node.status}
+Capacity:
+  cpu:              ${node.cpuCapacity}m
+  memory:           ${node.memoryCapacity}Mi
+Allocated:
+  cpu:              ${Math.round(node.cpuAllocated)}m
+  memory:           ${Math.round(node.memoryAllocated)}Mi
+Conditions:
+  Type             Status
+  ----             ------
+  Ready            ${node.status === 'Ready' ? 'True' : 'False'}
+  MemoryPressure   ${node.memoryAllocated > node.memoryCapacity * 0.9 ? 'True' : 'False'}`;
+      } else {
+        outputText = `Error from server (NotFound): nodes "${nodeName}" not found`;
+        outputType = 'error';
+      }
+    } else if (lower.startsWith('kubectl describe svc') || lower.startsWith('describe svc')) {
+      const svc = gameState.services[0];
+      outputText = `Name:              ${svc?.name || 'web-service'}
+Namespace:         default
+Type:              ${svc?.type || 'ClusterIP'}
+IP:                ${svc?.clusterIP || '10.96.0.12'}
+Port:              http  80/TCP
+TargetPort:        80/TCP
+Selector:          app=${svc?.selector['app'] || 'none'}
+Endpoints:         ${gameState.pods.filter(p => p.status === 'Running').map(p => `10.244.0.${p.id.slice(-2)}:80`).join(', ') || '<none>'}`;
+    } else if (lower.includes('apply -f service.yaml') || lower.includes('service.yaml')) {
+      handleFixServiceSelector();
+      return;
+    } else if (lower.includes('set env') || lower.includes('db_host')) {
+      handleFixEnv();
+      return;
+    } else if (lower.includes('rollout status')) {
+      const isV2 = gameState.deployments[0]?.version === 'v2.0';
+      outputText = isV2
+        ? 'deployment "web" successfully rolled out to v2.0'
+        : 'Waiting for deployment "web" rollout to finish: 0 of 3 updated replicas are available...';
+      outputType = isV2 ? 'success' : 'output';
     } else if (lower.includes('scale')) {
       const match = lower.match(/--replicas=(\d+)/);
       if (match) {

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Terminal, Send, Trash2, HelpCircle } from 'lucide-react';
+import { Terminal, Send, Trash2, HelpCircle, Sparkles } from 'lucide-react';
 import type { GameState } from '../types/game';
 import { soundEngine } from '../services/soundEngine';
 
@@ -19,18 +19,81 @@ export const KubectlTerminal: React.FC<KubectlTerminalProps> = ({
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const commandChips = [
-    'kubectl get pods',
-    'kubectl get nodes',
-    'kubectl get svc',
-    'kubectl scale deployment web --replicas=3',
-    'kubectl logs backend-78b-crash',
-    'kubectl set resources deployment web --limits=memory=256Mi'
-  ];
+  // Contextual command suggestions based on current mission
+  const getMissionCommandChips = () => {
+    switch (state.currentLevelId) {
+      case 1:
+        return [
+          'kubectl scale deployment web --replicas=1',
+          'kubectl get pods',
+          'kubectl get nodes',
+          'kubectl get svc'
+        ];
+      case 2:
+        return [
+          'kubectl scale deployment web --replicas=3',
+          'kubectl get pods',
+          'kubectl get deploy',
+          'kubectl get nodes'
+        ];
+      case 3:
+        return [
+          'kubectl apply -f service.yaml',
+          'kubectl get svc',
+          'kubectl describe svc web-service',
+          'kubectl get pods'
+        ];
+      case 4:
+        return [
+          'kubectl logs backend-78b-crash',
+          'kubectl describe pod backend-78b-crash',
+          'kubectl set env deployment backend DB_HOST=postgres-cluster',
+          'kubectl get pods'
+        ];
+      case 5:
+        return [
+          'kubectl set resources deployment web --limits=memory=256Mi',
+          'kubectl describe pod web-crunch-1',
+          'kubectl get pods'
+        ];
+      case 6:
+        return [
+          'kubectl set image deployment web web=web-app:2.0',
+          'kubectl rollout status deployment web',
+          'kubectl get pods'
+        ];
+      case 7:
+        return [
+          'kubectl get nodes',
+          'kubectl get pods -o wide',
+          'kubectl describe node worker-node-2'
+        ];
+      case 8:
+        return [
+          'kubectl autoscale deployment web --min=2 --max=7 --cpu-percent=60',
+          'kubectl get hpa',
+          'kubectl get pods'
+        ];
+      default:
+        return [
+          'kubectl get pods',
+          'kubectl get nodes',
+          'kubectl get svc',
+          'kubectl scale deployment web --replicas=3'
+        ];
+    }
+  };
 
+  const commandChips = getMissionCommandChips();
+
+  // Scroll to bottom whenever terminal history updates
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      requestAnimationFrame(() => {
+        if (scrollRef.current) {
+          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+      });
     }
   }, [state.terminalHistory]);
 
@@ -71,8 +134,8 @@ export const KubectlTerminal: React.FC<KubectlTerminalProps> = ({
 
   return (
     <div className="bg-slate-950/95 border border-slate-800 rounded-xl flex flex-col h-[320px] md:h-full min-h-[300px] shadow-xl overflow-hidden font-mono">
-      {/* Terminal Title Bar */}
-      <div className="bg-slate-900 px-3 py-1.5 border-b border-slate-800 flex items-center justify-between text-xs">
+      {/* 1. Terminal Title Bar */}
+      <div className="bg-slate-900 px-3 py-1.5 border-b border-slate-800 flex items-center justify-between text-xs shrink-0">
         <div className="flex items-center gap-2 text-slate-300">
           <Terminal className="w-3.5 h-3.5 text-cyan-400" />
           <span className="font-semibold text-cyan-300">kubectl CLI Terminal</span>
@@ -104,13 +167,43 @@ export const KubectlTerminal: React.FC<KubectlTerminalProps> = ({
         </div>
       </div>
 
-      {/* Terminal Logs Output */}
+      {/* 2. TOP TOOLBAR: Quick Command Suggestions (Moved to the TOP!) */}
+      <div className="px-3 py-2 bg-slate-900/80 border-b border-slate-800 flex flex-col gap-1.5 shrink-0">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-cyan-400 uppercase font-black tracking-wider flex items-center gap-1">
+            <Sparkles className="w-3 h-3 text-cyan-400" />
+            Suggested Commands (Tap to Run):
+          </span>
+          <span className="text-[9px] text-slate-500">
+            Mission {state.currentLevelId}
+          </span>
+        </div>
+
+        {/* Suggestion Chips */}
+        <div className="flex flex-wrap items-center gap-1.5 max-h-[85px] overflow-y-auto no-scrollbar">
+          {commandChips.map((chip, idx) => (
+            <button
+              key={idx}
+              onClick={() => {
+                soundEngine.playClick();
+                onExecuteCommand(chip);
+              }}
+              title={`Execute: ${chip}`}
+              className="text-[10px] bg-slate-800 hover:bg-cyan-950 text-sky-300 hover:text-cyan-200 hover:border-cyan-500/80 px-2 py-0.5 rounded border border-slate-700/80 transition font-mono font-medium shadow-sm active:scale-95 text-left"
+            >
+              {chip.replace('kubectl ', '')}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 3. Terminal Console Output Screen (Middle, flexible scroll area) */}
       <div
         ref={scrollRef}
-        className="flex-1 p-3 overflow-y-auto space-y-1 text-xs select-text leading-relaxed"
+        className="flex-1 p-3 overflow-y-auto space-y-1.5 text-xs select-text leading-relaxed bg-slate-950"
       >
         <div className="text-slate-500 text-[11px] mb-2 border-b border-slate-900 pb-1">
-          Type kubectl commands or tap suggestion chips below. Try `kubectl get pods` or `kubectl help`.
+          Kubernetes Fleet CLI. Tap suggestions above or type commands below. Try `kubectl get pods` or `kubectl help`.
         </div>
 
         {state.terminalHistory.map((item, index) => {
@@ -127,31 +220,10 @@ export const KubectlTerminal: React.FC<KubectlTerminalProps> = ({
         })}
       </div>
 
-      {/* Quick Command Chips */}
-      <div className="px-3 py-1.5 bg-slate-900/70 border-t border-slate-800 flex flex-col gap-1.5">
-        <span className="text-[10px] text-slate-400 uppercase font-extrabold tracking-wider">
-          Suggestions:
-        </span>
-        <div className="flex flex-wrap items-center gap-1.5">
-          {commandChips.map((chip, idx) => (
-            <button
-              key={idx}
-              onClick={() => {
-                soundEngine.playClick();
-                onExecuteCommand(chip);
-              }}
-              className="text-[10px] bg-slate-800 hover:bg-slate-700 text-sky-300 hover:text-cyan-200 px-2 py-0.5 rounded border border-slate-700/80 transition font-mono font-medium shadow-sm hover:border-cyan-500/50"
-            >
-              {chip.replace('kubectl ', '')}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Input Bar */}
+      {/* 4. Command Input Bar (At the very bottom) */}
       <form
         onSubmit={handleSubmit}
-        className="bg-slate-900/90 border-t border-slate-800 px-3 py-1.5 flex items-center gap-2"
+        className="bg-slate-900/90 border-t border-slate-800 px-3 py-2 flex items-center gap-2 shrink-0"
       >
         <span className="text-cyan-400 font-bold select-none">&gt;</span>
         <input
@@ -165,7 +237,7 @@ export const KubectlTerminal: React.FC<KubectlTerminalProps> = ({
         />
         <button
           type="submit"
-          className="p-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded transition shadow-sm"
+          className="p-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded transition shadow-sm active:scale-95"
           title="Run Command"
         >
           <Send className="w-3 h-3" />
