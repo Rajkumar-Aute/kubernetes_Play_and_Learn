@@ -56,25 +56,25 @@ export const ClusterCanvas: React.FC<ClusterCanvasProps> = ({
       {/* Main Cluster Topology */}
       <div className="relative z-10 grid grid-cols-1 md:grid-cols-12 gap-4 flex-1 items-stretch">
         {/* Left Column: Internet & Ingress Gateway */}
-        <div className="md:col-span-3 flex flex-col justify-center space-y-4">
+        <div className="md:col-span-3 flex flex-col justify-center space-y-3">
           <div className="bg-slate-900/90 border border-cyan-800/60 rounded-xl p-3 shadow-lg glow-cyan/20">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-1.5">
               <div className="flex items-center gap-2">
                 <Globe className="w-4 h-4 text-cyan-400 animate-spin-slow" />
                 <span className="text-xs font-bold uppercase tracking-wider text-cyan-300">
-                  Ingress Controller
+                  Ingress (Gateway)
                 </span>
               </div>
               <span className="px-1.5 py-0.5 text-[10px] font-mono bg-cyan-950 text-cyan-400 rounded border border-cyan-800">
-                80/443
+                Port 80/443
               </span>
             </div>
             <p className="text-[11px] text-slate-400 mb-2">
-              Path: <code className="text-cyan-300 font-mono">/</code> &rarr;{' '}
+              Front Door: <code className="text-cyan-300 font-mono">/</code> &rarr;{' '}
               <span className="text-sky-300 font-mono">{ingress.rules[0]?.serviceName}</span>
             </p>
             <div className="flex items-center justify-between text-xs bg-slate-950/80 p-2 rounded-lg border border-slate-800">
-              <span className="text-slate-400">Incoming Load:</span>
+              <span className="text-slate-400">Incoming Traffic:</span>
               <span className="font-mono font-bold text-cyan-300 flex items-center gap-1">
                 <Activity className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
                 {state.trafficRate} req/s
@@ -82,13 +82,18 @@ export const ClusterCanvas: React.FC<ClusterCanvasProps> = ({
             </div>
           </div>
 
+          {/* Directional Network Cable Arrow */}
+          <div className="flex items-center justify-center text-[10px] font-mono text-cyan-400 font-bold gap-1 py-0.5">
+            <span>↓ routes HTTP to internal Service</span>
+          </div>
+
           {/* Center Connection / Service Proxy */}
           <div className="bg-slate-900/90 border border-blue-800/60 rounded-xl p-3 shadow-lg glow-blue/20">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-1.5">
               <div className="flex items-center gap-2">
                 <Layers className="w-4 h-4 text-blue-400" />
                 <span className="text-xs font-bold uppercase tracking-wider text-blue-300">
-                  Service (ClusterIP)
+                  Service (Load Balancer)
                 </span>
               </div>
               <span className="px-1.5 py-0.5 text-[10px] font-mono bg-blue-950 text-blue-400 rounded border border-blue-800">
@@ -97,7 +102,7 @@ export const ClusterCanvas: React.FC<ClusterCanvasProps> = ({
             </div>
             <div className="text-[11px] text-slate-300 space-y-1 bg-slate-950/80 p-2 rounded-lg border border-slate-800">
               <div className="flex justify-between">
-                <span className="text-slate-400">Selector:</span>
+                <span className="text-slate-400">Pod Selector:</span>
                 <span
                   className={`font-mono font-bold ${
                     service?.selector['app'] === 'web'
@@ -109,10 +114,15 @@ export const ClusterCanvas: React.FC<ClusterCanvasProps> = ({
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Algorithm:</span>
+                <span className="text-slate-400">Balancing Mode:</span>
                 <span className="text-slate-300 font-mono">Round-Robin</span>
               </div>
             </div>
+          </div>
+
+          {/* Directional Network Cable Arrow to Pods */}
+          <div className="flex items-center justify-center text-[10px] font-mono text-blue-400 font-bold gap-1 py-0.5">
+            <span>&rarr; distributes load across Pods</span>
           </div>
         </div>
 
