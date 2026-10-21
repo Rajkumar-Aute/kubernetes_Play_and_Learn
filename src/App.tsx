@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GameEngine } from './game/engine';
+
+// KubeTower Engine & Components
+import { GameEngine as TowerEngine } from './game/engine';
 import { kubeSound } from './game/sound';
-import { ytPlayables } from './services/ytPlayables';
 import type { Tower, TowerType } from './game/types';
 import { KubeTowerCanvas } from './components/KubeTowerCanvas';
 import { WaveHUD } from './components/WaveHUD';
@@ -10,24 +11,41 @@ import { TowerUpgradeModal } from './components/TowerUpgradeModal';
 import { K8sLearnerCard } from './components/K8sLearnerCard';
 import { KubeTowerHelpModal } from './components/KubeTowerHelpModal';
 
-export const App: React.FC = () => {
-  const engineRef = useRef<GameEngine>(new GameEngine());
-  const engine = engineRef.current;
+// KubeWire Engine & Components
+import { WireEngine } from './wireGame/engine';
+import { wireSound } from './wireGame/sound';
+import { WireCanvas } from './components/wireGame/WireCanvas';
+import { WireHUD } from './components/wireGame/WireHUD';
+import { WireLessonModal } from './components/wireGame/WireLessonModal';
 
-  // React state synced from engine for reactive UI renders
-  const [, setTick] = useState<number>(0);
+// Game Switcher & Services
+import { GameSwitcher, type ActiveGame } from './components/GameSwitcher';
+import { ytPlayables } from './services/ytPlayables';
+
+export const App: React.FC = () => {
+  // Current game mode: default to 'wire' as requested by the user
+  const [activeGame, setActiveGame] = useState<ActiveGame>('wire');
+
+  // --- KubeWire State ---
+  const wireEngineRef = useRef<WireEngine>(new WireEngine());
+  const wireEngine = wireEngineRef.current;
+  const [isWireLessonOpen, setIsWireLessonOpen] = useState<boolean>(false);
+  const [isWireMuted, setIsWireMuted] = useState<boolean>(wireSound.getMuted());
+
+  // --- KubeTower State ---
+  const towerEngineRef = useRef<TowerEngine>(new TowerEngine());
+  const towerEngine = towerEngineRef.current;
   const [selectedTower, setSelectedTower] = useState<Tower | null>(null);
   const [selectedTowerType, setSelectedTowerType] = useState<TowerType | null>(null);
-  const [isHelpOpen, setIsHelpOpen] = useState<boolean>(false);
-  const [isMuted, setIsMuted] = useState<boolean>(kubeSound.getMuted());
-  const [highScore, setHighScore] = useState<number>(0);
+  const [isTowerHelpOpen, setIsTowerHelpOpen] = useState<boolean>(false);
+  const [isTowerMuted, setIsTowerMuted] = useState<boolean>(kubeSound.getMuted());
 
-  // Re-sync UI state from engine
+  // Reactive Tick for UI Re-renders
+  const [, setTick] = useState<number>(0);
   const forceUpdate = useCallback(() => {
     setTick((t) => t + 1);
   }, []);
 
-  // Sync state tick on an interval for reactive HUD numbers
   useEffect(() => {
     const timer = setInterval(() => {
       forceUpdate();
@@ -41,76 +59,61 @@ export const App: React.FC = () => {
     ytPlayables.notifyGameReady();
 
     const unbindPause = ytPlayables.onPause(() => {
-      engine.setGameSpeed(0);
+      towerEngine.setGameSpeed(0);
+      wireEngine.setSpeed(0);
       forceUpdate();
     });
 
     const unbindResume = ytPlayables.onResume(() => {
-      engine.setGameSpeed(1);
+      towerEngine.setGameSpeed(1);
+      wireEngine.setSpeed(1);
       forceUpdate();
     });
 
     const unbindAudio = ytPlayables.onAudioChange((enabled) => {
       kubeSound.setMuted(!enabled);
-      setIsMuted(!enabled);
+      wireSound.setMuted(!enabled);
+      setIsTowerMuted(!enabled);
+      setIsWireMuted(!enabled);
       forceUpdate();
     });
-
-    // Load saved cloud progress
-    ytPlayables
-      .loadGameState<{ highScore?: number; tutorialSeen?: boolean }>()
-      .then((saved) => {
-        if (saved?.highScore) {
-          setHighScore(saved.highScore);
-        }
-        if (!saved?.tutorialSeen) {
-          // Open help modal on very first visit
-          setIsHelpOpen(true);
-        }
-      });
 
     return () => {
       unbindPause();
       unbindResume();
       unbindAudio();
     };
-  }, [engine, forceUpdate]);
+  }, [towerEngine, wireEngine, forceUpdate]);
 
-  // Save High Score on change
+  // Keyboard Shortcuts for Tower Defense
   useEffect(() => {
-    if (engine.state.score > highScore) {
-      setHighScore(engine.state.score);
-      ytPlayables.saveGameState({ highScore: engine.state.score, tutorialSeen: true });
-    }
-  }, [engine.state.score, highScore]);
+    if (activeGame !== 'tower') return;
 
-  // Keyboard shortcuts (1-4 for towers, Space to start wave, Esc to cancel)
-  useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       if (e.key === '1') {
         setSelectedTowerType('pod');
-        engine.selectTowerType('pod');
+        towerEngine.selectTowerType('pod');
       } else if (e.key === '2') {
         setSelectedTowerType('service');
-        engine.selectTowerType('service');
+        towerEngine.selectTowerType('service');
       } else if (e.key === '3') {
         setSelectedTowerType('ingress');
-        engine.selectTowerType('ingress');
+        towerEngine.selectTowerType('ingress');
       } else if (e.key === '4') {
         setSelectedTowerType('hpa');
-        engine.selectTowerType('hpa');
+        towerEngine.selectTowerType('hpa');
       } else if (e.key === 'Escape') {
         setSelectedTowerType(null);
         setSelectedTower(null);
-        engine.selectTowerType(null);
-        engine.selectTower(null);
-        setIsHelpOpen(false);
+        towerEngine.selectTowerType(null);
+        towerEngine.selectTower(null);
+        setIsTowerHelpOpen(false);
       } else if (e.key === ' ') {
         e.preventDefault();
-        if (engine.state.waveStatus === 'idle') {
-          engine.startWave();
+        if (towerEngine.state.waveStatus === 'idle') {
+          towerEngine.startWave();
           forceUpdate();
         }
       }
@@ -118,122 +121,203 @@ export const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [engine, forceUpdate]);
+  }, [activeGame, towerEngine, forceUpdate]);
 
-  // Handlers
+  // --- KubeWire Handlers ---
+  const handleToggleWireMute = () => {
+    const muted = wireSound.toggleMute();
+    setIsWireMuted(muted);
+  };
+
+  const handleToggleWireSpeed = () => {
+    const nextSpeed = wireEngine.state.speed === 1 ? 2 : 1;
+    wireEngine.setSpeed(nextSpeed);
+    forceUpdate();
+  };
+
+  const handleResetWires = () => {
+    wireEngine.state.wires = [];
+    wireEngine.state.packets = [];
+    wireEngine.state.selectedWireId = null;
+    forceUpdate();
+  };
+
+  const handleNextWireLevel = () => {
+    wireEngine.nextLevel();
+    setIsWireLessonOpen(false);
+    forceUpdate();
+  };
+
+  const handleRestartWireLevel = () => {
+    wireEngine.restartCurrentLevel();
+    setIsWireLessonOpen(false);
+    forceUpdate();
+  };
+
+  // --- KubeTower Handlers ---
   const handleSelectTowerType = (type: TowerType | null) => {
     setSelectedTowerType(type);
-    engine.selectTowerType(type);
-    if (type !== null) {
-      setSelectedTower(null);
-    }
+    towerEngine.selectTowerType(type);
+    if (type !== null) setSelectedTower(null);
     forceUpdate();
   };
 
   const handleSelectTower = (tower: Tower | null) => {
     setSelectedTower(tower);
-    engine.selectTower(tower);
-    if (tower !== null) {
-      setSelectedTowerType(null);
-    }
+    towerEngine.selectTower(tower);
+    if (tower !== null) setSelectedTowerType(null);
     forceUpdate();
   };
 
   const handleStartWave = () => {
-    engine.startWave();
+    towerEngine.startWave();
     forceUpdate();
   };
 
   const handleNextWave = () => {
-    engine.advanceToNextWave();
+    towerEngine.advanceToNextWave();
     forceUpdate();
   };
 
-  const handleRestart = () => {
-    engine.resetGame();
+  const handleRestartTower = () => {
+    towerEngine.resetGame();
     setSelectedTower(null);
     setSelectedTowerType(null);
     forceUpdate();
   };
 
-  const handleToggleMute = () => {
+  const handleToggleTowerMute = () => {
     const muted = kubeSound.toggleMute();
-    setIsMuted(muted);
+    setIsTowerMuted(muted);
   };
 
-  const handleToggleSpeed = () => {
-    const nextSpeed = engine.state.gameSpeed === 1 ? 2 : 1;
-    engine.setGameSpeed(nextSpeed);
+  const handleToggleTowerSpeed = () => {
+    const nextSpeed = towerEngine.state.gameSpeed === 1 ? 2 : 1;
+    towerEngine.setGameSpeed(nextSpeed);
     forceUpdate();
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-between p-2 sm:p-4 selection:bg-cyan-500 selection:text-black">
-      {/* Top HUD */}
-      <WaveHUD
-        engine={engine}
-        coins={engine.state.coins}
-        slaHealth={engine.state.slaHealth}
-        currentWave={engine.state.currentWave}
-        waveStatus={engine.state.waveStatus}
-        score={engine.state.score}
-        gameSpeed={engine.state.gameSpeed}
-        isMuted={isMuted}
-        onToggleMute={handleToggleMute}
-        onToggleSpeed={handleToggleSpeed}
-        onOpenHowToPlay={() => setIsHelpOpen(true)}
-        onStartWave={handleStartWave}
-      />
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-between p-2 sm:p-4 selection:bg-indigo-500 selection:text-white">
+      {/* Game Mode Switcher */}
+      <GameSwitcher activeGame={activeGame} onSelectGame={setActiveGame} />
 
-      {/* Main Canvas */}
-      <main className="w-full flex flex-col items-center justify-center flex-1 my-auto">
-        <KubeTowerCanvas engine={engine} onSelectTower={handleSelectTower} />
+      {activeGame === 'wire' ? (
+        /* ==================== OPTION 2: KUBEWIRE (CIRCUIT CONNECTOR) ==================== */
+        <div className="w-full flex flex-col items-center flex-1 my-auto">
+          {/* Wire HUD */}
+          <WireHUD
+            engine={wireEngine}
+            currentLevelId={wireEngine.state.currentLevelId}
+            deliveredCount={wireEngine.state.deliveredCount}
+            targetDeliveries={wireEngine.state.targetDeliveries}
+            droppedCount={wireEngine.state.droppedCount}
+            maxDroppedAllowed={wireEngine.state.maxDroppedAllowed}
+            wiresCount={wireEngine.state.wires.length}
+            maxWires={wireEngine.getCurrentLevel().maxWires}
+            speed={wireEngine.state.speed}
+            isMuted={isWireMuted}
+            onToggleMute={handleToggleWireMute}
+            onToggleSpeed={handleToggleWireSpeed}
+            onResetWires={handleResetWires}
+            onOpenLesson={() => setIsWireLessonOpen(true)}
+          />
 
-        {/* Tower Build Dock */}
-        <TowerShop
-          coins={engine.state.coins}
-          selectedTowerType={selectedTowerType}
-          onSelectTowerType={handleSelectTowerType}
-        />
-      </main>
+          {/* Wire Canvas */}
+          <WireCanvas engine={wireEngine} onSelectWire={() => forceUpdate()} />
 
-      {/* Footer Info */}
-      <footer className="w-full max-w-[1040px] mt-2 flex items-center justify-between text-[11px] text-slate-500 font-mono">
-        <div>
-          High Score: <span className="text-amber-400 font-bold">{highScore.toLocaleString()}</span>
+          {/* Wire Footer */}
+          <footer className="w-full max-w-[1040px] mt-2 flex items-center justify-between text-[11px] text-slate-500 font-mono">
+            <div>
+              Level Score:{' '}
+              <span className="text-indigo-400 font-bold">
+                {wireEngine.state.score.toLocaleString()}
+              </span>
+            </div>
+            <div className="hidden sm:block">
+              Controls: Click & Drag to connect wires • Click wire to select & cut
+            </div>
+            <div>YouTube Playables Edition 🔌</div>
+          </footer>
+
+          {/* Wire Lesson / Win / Loss Modal */}
+          <WireLessonModal
+            engine={wireEngine}
+            isOpen={isWireLessonOpen}
+            status={wireEngine.state.status}
+            onClose={() => setIsWireLessonOpen(false)}
+            onNextLevel={handleNextWireLevel}
+            onRestartLevel={handleRestartWireLevel}
+          />
         </div>
-        <div className="hidden sm:block">
-          Controls: [1-4] Build • [Click] Inspect & Scale • [Space] Deploy Wave
+      ) : (
+        /* ==================== OPTION 1: KUBETOWER (TOWER DEFENSE) ==================== */
+        <div className="w-full flex flex-col items-center flex-1 my-auto">
+          {/* Tower HUD */}
+          <WaveHUD
+            engine={towerEngine}
+            coins={towerEngine.state.coins}
+            slaHealth={towerEngine.state.slaHealth}
+            currentWave={towerEngine.state.currentWave}
+            waveStatus={towerEngine.state.waveStatus}
+            score={towerEngine.state.score}
+            gameSpeed={towerEngine.state.gameSpeed}
+            isMuted={isTowerMuted}
+            onToggleMute={handleToggleTowerMute}
+            onToggleSpeed={handleToggleTowerSpeed}
+            onOpenHowToPlay={() => setIsTowerHelpOpen(true)}
+            onStartWave={handleStartWave}
+          />
+
+          {/* Tower Canvas */}
+          <KubeTowerCanvas engine={towerEngine} onSelectTower={handleSelectTower} />
+
+          {/* Tower Build Dock */}
+          <TowerShop
+            coins={towerEngine.state.coins}
+            selectedTowerType={selectedTowerType}
+            onSelectTowerType={handleSelectTowerType}
+          />
+
+          {/* Tower Footer */}
+          <footer className="w-full max-w-[1040px] mt-2 flex items-center justify-between text-[11px] text-slate-500 font-mono">
+            <div>
+              Score:{' '}
+              <span className="text-amber-400 font-bold">
+                {towerEngine.state.score.toLocaleString()}
+              </span>
+            </div>
+            <div className="hidden sm:block">
+              Controls: [1-4] Build • [Click] Inspect & Scale • [Space] Deploy Wave
+            </div>
+            <div>YouTube Playables Edition 🛡️</div>
+          </footer>
+
+          {/* Tower Modals */}
+          <TowerUpgradeModal
+            tower={selectedTower}
+            engine={towerEngine}
+            coins={towerEngine.state.coins}
+            onClose={() => handleSelectTower(null)}
+            onActionTriggered={forceUpdate}
+          />
+
+          <K8sLearnerCard
+            engine={towerEngine}
+            waveStatus={towerEngine.state.waveStatus}
+            currentWave={towerEngine.state.currentWave}
+            slaHealth={towerEngine.state.slaHealth}
+            score={towerEngine.state.score}
+            onNextWave={handleNextWave}
+            onRestart={handleRestartTower}
+          />
+
+          <KubeTowerHelpModal
+            isOpen={isTowerHelpOpen}
+            onClose={() => setIsTowerHelpOpen(false)}
+          />
         </div>
-        <div>YouTube Playables Edition 🛡️</div>
-      </footer>
-
-      {/* Modals & Educational Cards */}
-      <TowerUpgradeModal
-        tower={selectedTower}
-        engine={engine}
-        coins={engine.state.coins}
-        onClose={() => handleSelectTower(null)}
-        onActionTriggered={forceUpdate}
-      />
-
-      <K8sLearnerCard
-        engine={engine}
-        waveStatus={engine.state.waveStatus}
-        currentWave={engine.state.currentWave}
-        slaHealth={engine.state.slaHealth}
-        score={engine.state.score}
-        onNextWave={handleNextWave}
-        onRestart={handleRestart}
-      />
-
-      <KubeTowerHelpModal
-        isOpen={isHelpOpen}
-        onClose={() => {
-          setIsHelpOpen(false);
-          ytPlayables.saveGameState({ tutorialSeen: true });
-        }}
-      />
+      )}
     </div>
   );
 };
